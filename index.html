@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#5ec8e0" />
+  <title>GULL DUMP — Beach Bombing Run</title>
+  <link rel="stylesheet" href="./styles.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💩</text></svg>" />
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./vendor/three.module.js"
+    }
+  }
+  </script>
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <!-- In-game HUD -->
+  <div id="hud" class="hidden">
+    <div class="hud-top">
+      <div class="hud-pill" id="scorePill">
+        <span class="hud-label">SCORE</span>
+        <span class="hud-value" id="scoreValue">0</span>
+      </div>
+      <div class="hud-pill" id="comboPill">
+        <span class="hud-value" id="comboValue"></span>
+      </div>
+      <div class="hud-pill" id="timerPill">
+        <span class="hud-label">TIME</span>
+        <span class="hud-value" id="timerValue">30</span>
+      </div>
+    </div>
+
+    <div id="hitToast" class="hidden"></div>
+
+    <!-- Poop / bomb button -->
+    <button id="poopBtn" aria-label="Poop">
+      <svg class="charge-ring" viewBox="0 0 120 120">
+        <circle class="charge-bg" cx="60" cy="60" r="54" />
+        <circle class="charge-fg" cx="60" cy="60" r="54" />
+      </svg>
+      <span class="poop-emoji">💩</span>
+    </button>
+  </div>
+
+  <!-- Start screen -->
+  <div id="menu" class="overlay">
+    <div class="overlay-card">
+      <div class="title-gull">🐦‍⬛💨</div>
+      <h1 class="title">GULL DUMP</h1>
+      <p class="subtitle">Beach Bombing Run</p>
+      <div class="how-to">
+        <div class="howrow"><span class="howicon">👆</span><span>Drag anywhere to <b>fly &amp; steer</b></span></div>
+        <div class="howrow"><span class="howicon">💩</span><span><b>Hold</b> the button to charge — <b>release</b> to bomb</span></div>
+        <div class="howrow"><span class="howicon">🎯</span><span>Splat the targets. Bullseyes = big points</span></div>
+        <div class="howrow"><span class="howicon">🐢</span><span>Get close for slow-mo <b>bullet time</b></span></div>
+      </div>
+      <button id="playBtn" class="big-btn">PLAY</button>
+      <p class="best-line">Best: <span id="menuBest">0</span></p>
+    </div>
+  </div>
+
+  <!-- Game over screen -->
+  <div id="gameover" class="overlay hidden">
+    <div class="overlay-card">
+      <h1 class="title small" id="goTitle">TIME'S UP!</h1>
+      <div class="final-score" id="finalScore">0</div>
+      <p class="final-label">points</p>
+      <div class="go-stats">
+        <div class="go-stat"><span id="goHits">0</span><label>splats</label></div>
+        <div class="go-stat"><span id="goBest">0</span><label>best</label></div>
+        <div class="go-stat"><span id="goBullseyes">0</span><label>bullseyes</label></div>
+      </div>
+      <p class="go-blurb" id="goBlurb"></p>
+      <button id="againBtn" class="big-btn">PLAY AGAIN</button>
+    </div>
+  </div>
+
+  <div id="loading" class="overlay">
+    <div class="overlay-card">
+      <div class="title-gull spin">🐦</div>
+      <p class="subtitle">loading the flock…</p>
+    </div>
+  </div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
