@@ -5,8 +5,39 @@ import {
 } from './models.js';
 
 export const WORLD_RADIUS = 130;     // playable radius
-const SPAWN_RADIUS = 108;            // targets spawn within this
-const SHORE_Z = 30;                  // z < SHORE_Z(ish) is water side
+
+// ---------------------------------------------------------------------------
+// The "circuit": targets live evenly spaced around one smooth elliptical ring
+// centred on the beach, rather than scattered at random. This is the whole
+// trick to a pure loop-and-swoop feel — every target the bird's auto-aim
+// commits to is the *next gentle step* around the oval, so the flight path is a
+// flowing orbit with no hairpins or back-and-forth zig-zags. The oval is wide
+// and shallow to match the beach, and its gentlest curvature still sits well
+// inside the bird's turn radius, so it can always trace it smoothly.
+// ---------------------------------------------------------------------------
+const RING_CENTER = new THREE.Vector3(0, 0, 36);
+const RING_RX = 52;          // half-width of the oval (x)
+const RING_RZ = 36;          // half-depth of the oval (z) — kept close to RX so the
+                             // curvature is even and there are no flat spots to cut across
+const ORBIT_SPEED = 3;       // m/s drift for moving targets: gentle, so even spacing holds
+const ORBIT_DIR = 1;         // every mover circulates the ring the same way
+const ORBIT_OMEGA = ORBIT_SPEED / ((RING_RX + RING_RZ) / 2);
+
+// World-space point on the ring at a given angle.
+function ringPos(angle) {
+  return new THREE.Vector3(
+    RING_CENTER.x + Math.cos(angle) * RING_RX,
+    0,
+    RING_CENTER.z + Math.sin(angle) * RING_RZ,
+  );
+}
+// Heading (rotation.y) facing along the ring's tangent at `angle`, so movers
+// point the way they travel. forward = (sin y, cos y) ⇒ y = atan2(vx, vz).
+function ringHeading(angle, dir) {
+  const vx = -Math.sin(angle) * RING_RX * dir;
+  const vz = Math.cos(angle) * RING_RZ * dir;
+  return Math.atan2(vx, vz);
+}
 
 // ---------------------------------------------------------------------------
 // Build the static beach world: sky, sun, sand, sea, boardwalk, palms, etc.
@@ -107,8 +138,8 @@ const TYPES = {
   person:  { build: buildPerson, value: 100, radius: 1.5, moving: false, label: 'Beachgoer' },
   kid:     { build: buildKid,    value: 150, radius: 1.0, moving: false, label: 'Kid' },
   picnic:  { build: buildPicnic, value: 120, radius: 2.1, moving: false, label: 'Picnic' },
-  biker:   { build: buildBiker,  value: 200, radius: 1.3, moving: true,  speed: 9,  label: 'Cyclist' },
-  car:     { build: buildCar,    value: 175, radius: 2.2, moving: true,  speed: 13, label: 'Car' },
+  biker:   { build: buildBiker,  value: 200, radius: 1.3, moving: true,  label: 'Cyclist' },
+  car:     { build: buildCar,    value: 175, radius: 2.2, moving: true,  label: 'Car' },
 };
 const TYPE_KEYS = Object.keys(TYPES);
 
@@ -150,40 +181,28 @@ export class TargetManager {
   reset() {
     for (const t of this.targets) this.scene.remove(t.group);
     this.targets = [];
-    for (let i = 0; i < this.maxTargets; i++) this.spawn();
+    // One target per evenly-spaced slot around the ring.
+    for (let i = 0; i < this.maxTargets; i++) this.spawn(null, i);
   }
 
-  randomPos(avoidRoad = true) {
-    for (let attempt = 0; attempt < 20; attempt++) {
-      const ang = Math.random() * Math.PI * 2;
-      const rad = 25 + Math.random() * SPAWN_RADIUS;
-      const x = Math.cos(ang) * rad;
-      const z = Math.sin(ang) * rad * 0.65 + 25;
-      if (z < -6) continue; // not in the sea
-      return new THREE.Vector3(x, 0, z);
-    }
-    return new THREE.Vector3((Math.random() - 0.5) * 120, 0, 40);
-  }
-
-  spawn(typeKey) {
+  // Spawn a target into ring `slot`. Each slot owns a fixed angle around the
+  // oval, and respawns reuse the same slot, so the even spacing of the circuit
+  // is preserved for the whole round no matter what gets bombed.
+  spawn(typeKey, slot = 0) {
     const key = typeKey || TYPE_KEYS[(Math.random() * TYPE_KEYS.length) | 0];
     const cfg = TYPES[key];
     const group = cfg.build();
 
-    let pos, dir = null, speed = 0;
-    if (cfg.moving) {
-      // roll along the road strip (z ~ 70), pick a direction
-      const goRight = Math.random() < 0.5;
-      pos = new THREE.Vector3((goRight ? -1 : 1) * (WORLD_RADIUS + 10), 0, 70 + (Math.random() - 0.5) * 6);
-      dir = new THREE.Vector3(goRight ? 1 : 0, 0, 0);
-      dir.x = goRight ? 1 : -1;
-      speed = cfg.speed;
-      group.rotation.y = goRight ? Math.PI / 2 : -Math.PI / 2;
+    const orbit = !!cfg.moving;
+    const angle = (slot / this.maxTargets) * Math.PI * 2;
+    group.position.copy(ringPos(angle));
+    if (orbit) {
+      // movers face (and drift) along the ring tangent
+      group.rotation.y = ringHeading(angle, ORBIT_DIR);
     } else {
-      pos = this.randomPos();
-      group.rotation.y = Math.random() * Math.PI * 2;
+      // statics face inward toward the centre of the circuit — tidy + deterministic
+      group.rotation.y = angle + Math.PI / 2;
     }
-    group.position.copy(pos);
 
     const bullseye = buildBullseye();
     const topH = group.userData.headHeight || 2;
@@ -196,7 +215,7 @@ export class TargetManager {
       key, group, bullseye,
       cfg, value: cfg.value, radius: cfg.radius,
       hitY: topH,
-      dir, speed,
+      slot, orbit, angle,
       bobT: Math.random() * 10,
       alive: true,
       dying: 0,
@@ -219,7 +238,7 @@ export class TargetManager {
         if (tg.dying > 0.6) {
           this.scene.remove(tg.group);
           this.targets.splice(i, 1);
-          this.spawn();
+          this.spawn(null, tg.slot); // refill the same ring slot to keep spacing even
         }
         continue;
       }
@@ -229,16 +248,16 @@ export class TargetManager {
       tg.bullseye.position.y = tg.hitY + 1.4 + Math.sin(tg.bobT * 2) * 0.25;
       tg.bullseye.rotation.y += dt * 0.8;
 
-      // movement for cars/bikers
-      if (tg.dir) {
-        tg.group.position.addScaledVector(tg.dir, tg.speed * dt);
-        // wheels spin
+      // movers (cars/bikers) drift slowly *along* the ring, all the same way, so
+      // the bird overtakes them on a smooth arc instead of intercepting across.
+      if (tg.orbit) {
+        tg.angle += ORBIT_OMEGA * ORBIT_DIR * dt;
+        const p = ringPos(tg.angle);
+        tg.group.position.x = p.x;
+        tg.group.position.z = p.z;
+        tg.group.rotation.y = ringHeading(tg.angle, ORBIT_DIR);
         if (tg.group.userData.wheels) {
-          for (const w of tg.group.userData.wheels) w.rotation.x -= dt * tg.speed * 1.5;
-        }
-        // wrap around when off the edge
-        if (Math.abs(tg.group.position.x) > WORLD_RADIUS + 14) {
-          tg.group.position.x = -Math.sign(tg.group.position.x) * (WORLD_RADIUS + 12);
+          for (const w of tg.group.userData.wheels) w.rotation.x -= dt * ORBIT_SPEED * 1.5;
         }
       }
     }
@@ -258,12 +277,17 @@ export class TargetManager {
   }
 
   // Pick the best target to line up a bombing run on. Unlike nearest(), this
-  // only considers targets *ahead* of the bird (within a forward cone) and
-  // beyond a minimum distance, so the autopilot stops trying to U-turn back
-  // onto things it has already flown over. Falls back to the global nearest
-  // when there's nothing ahead, so the bird will still come around to hunt.
-  nearestAhead(pos, yaw, { maxAngle = Math.PI * 0.55, minDist = 14 } = {}) {
+  // only considers targets *ahead* of the bird (within a forward cone), beyond a
+  // minimum distance, and — crucially for the ring — *within reach* (about one
+  // ring-step). The maxDist cap is what keeps the bird flowing around the
+  // circuit: without it, a target on the far side sits dead-ahead and the bird
+  // darts straight across the middle; with it, only the next neighbour qualifies
+  // so the path stays a clean orbit. If nothing's within reach we still turn the
+  // short way toward the most head-on target ahead to re-acquire the ring, and
+  // only as a last resort fall back to the global nearest.
+  nearestAhead(pos, yaw, { maxAngle = Math.PI * 0.55, minDist = 14, maxDist = 55 } = {}) {
     let best = null, bestScore = Infinity, bestDist = 0;
+    let reacquire = null, reAbs = Infinity, reDist = 0; // most head-on in-cone target, any distance
     for (const tg of this.targets) {
       if (!tg.alive) continue;
       const dx = tg.group.position.x - pos.x;
@@ -273,12 +297,17 @@ export class TargetManager {
       // bearing of the target relative to the current heading, in [-PI, PI]
       const rel = Math.atan2(Math.sin(Math.atan2(dx, dz) - yaw),
                              Math.cos(Math.atan2(dx, dz) - yaw));
-      if (Math.abs(rel) > maxAngle) continue; // behind us / too far to the side
+      const a = Math.abs(rel);
+      if (a > maxAngle) continue; // behind us / too far to the side
+      if (a < reAbs) { reAbs = a; reacquire = tg; reDist = d; } // remember for re-acquire
+      if (d > maxDist) continue; // don't commit across the ring — take the neighbour
       // Prefer closer and more head-on targets so we commit to one run.
-      const score = d * (1 + Math.abs(rel) * 0.9);
+      const score = d * (1 + a * 0.9);
       if (score < bestScore) { bestScore = score; best = tg; bestDist = d; }
     }
-    return best ? { target: best, dist: bestDist } : this.nearest(pos);
+    if (best) return { target: best, dist: bestDist };
+    if (reacquire) return { target: reacquire, dist: reDist };
+    return this.nearest(pos);
   }
 
   kill(tg) {
