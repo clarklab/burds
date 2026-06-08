@@ -44,9 +44,9 @@ proper installable PWA:
 
 - **Drag anywhere** on the screen to fly and steer (a virtual joystick). Drag
   up to climb, down to dive, left/right to bank.
-- **Let go** and an auto-pilot gently banks the bird toward the nearest target,
-  so you can focus on charging and dropping the bomb. Grab the stick again any
-  time to take back full control.
+- **Let go** and an auto-pilot banks the bird onto the nearest target *ahead*
+  of you — lining up the drop direction so you only have to charge for range.
+  Grab the stick again any time to take back full control.
 - **Hold the 💩 button** to charge power, then **release** to drop. A quick tap
   drops almost straight down; a full charge flings it far ahead.
 - A **reticle** on the ground shows exactly where your poop will land — it turns
