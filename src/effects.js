@@ -99,9 +99,20 @@ export function buildReticle() {
   );
   inner.rotation.x = -Math.PI / 2;
   g.add(inner);
+  // Soft halo that lights up as the predicted shot homes in, and pulses hard at
+  // the bullseye window — the visual half of the "release NOW" cue.
+  const glow = new THREE.Mesh(
+    new THREE.RingGeometry(1.25, 2.1, 28),
+    new THREE.MeshBasicMaterial({ color: 0x35ff7a, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false }),
+  );
+  glow.rotation.x = -Math.PI / 2;
+  glow.position.y = -0.01;
+  glow.visible = false;
+  g.add(glow);
   g.position.y = 0.15;
   g.userData.ring = ring;
   g.userData.inner = inner;
+  g.userData.glow = glow;
   return g;
 }
 

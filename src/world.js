@@ -15,10 +15,13 @@ export const WORLD_RADIUS = 130;     // playable radius
 // and shallow to match the beach, and its gentlest curvature still sits well
 // inside the bird's turn radius, so it can always trace it smoothly.
 // ---------------------------------------------------------------------------
-const RING_CENTER = new THREE.Vector3(0, 0, 36);
-const RING_RX = 52;          // half-width of the oval (x)
-const RING_RZ = 36;          // half-depth of the oval (z) — kept close to RX so the
-                             // curvature is even and there are no flat spots to cut across
+export const RING_CENTER = new THREE.Vector3(0, 0, 40);
+// A true circle (RX == RZ). With only a few targets this matters: on a circle the
+// target *across* the ring (distance 2R) sits far beyond the *adjacent* one
+// (distance R·√2), so the auto-aim's commit-distance cap can cleanly prefer the
+// neighbour and the bird circulates instead of darting across the middle.
+const RING_RX = 40;
+const RING_RZ = 40;
 const ORBIT_SPEED = 3;       // m/s drift for moving targets: gentle, so even spacing holds
 const ORBIT_DIR = 1;         // every mover circulates the ring the same way
 const ORBIT_OMEGA = ORBIT_SPEED / ((RING_RX + RING_RZ) / 2);
@@ -175,7 +178,8 @@ export class TargetManager {
   constructor(scene) {
     this.scene = scene;
     this.targets = [];
-    this.maxTargets = 8;
+    // Fewer, well-separated targets => longer, cleaner swoops between them.
+    this.maxTargets = 4;
   }
 
   reset() {
@@ -276,38 +280,27 @@ export class TargetManager {
     return best ? { target: best, dist: bd } : null;
   }
 
-  // Pick the best target to line up a bombing run on. Unlike nearest(), this
-  // only considers targets *ahead* of the bird (within a forward cone), beyond a
-  // minimum distance, and — crucially for the ring — *within reach* (about one
-  // ring-step). The maxDist cap is what keeps the bird flowing around the
-  // circuit: without it, a target on the far side sits dead-ahead and the bird
-  // darts straight across the middle; with it, only the next neighbour qualifies
-  // so the path stays a clean orbit. If nothing's within reach we still turn the
-  // short way toward the most head-on target ahead to re-acquire the ring, and
-  // only as a last resort fall back to the global nearest.
-  nearestAhead(pos, yaw, { maxAngle = Math.PI * 0.55, minDist = 14, maxDist = 55 } = {}) {
-    let best = null, bestScore = Infinity, bestDist = 0;
-    let reacquire = null, reAbs = Infinity, reDist = 0; // most head-on in-cone target, any distance
+  // The next live target going *around* the ring, in circulation direction
+  // `loopDir` (+1 / -1), from the bird's current angular position about the ring
+  // centre. Committing to "the next one around" — rather than the nearest, which
+  // can sit straight across the middle — is what guarantees a clean, single-
+  // direction orbit no matter how few targets are live.
+  nextAround(pos, loopDir) {
+    const TAU = Math.PI * 2;
+    const phiB = Math.atan2(pos.z - RING_CENTER.z, pos.x - RING_CENTER.x);
+    let best = null, bestDelta = Infinity, bestDist = 0;
     for (const tg of this.targets) {
       if (!tg.alive) continue;
-      const dx = tg.group.position.x - pos.x;
-      const dz = tg.group.position.z - pos.z;
-      const d = Math.hypot(dx, dz);
-      if (d < minDist) continue; // basically underneath / just passed
-      // bearing of the target relative to the current heading, in [-PI, PI]
-      const rel = Math.atan2(Math.sin(Math.atan2(dx, dz) - yaw),
-                             Math.cos(Math.atan2(dx, dz) - yaw));
-      const a = Math.abs(rel);
-      if (a > maxAngle) continue; // behind us / too far to the side
-      if (a < reAbs) { reAbs = a; reacquire = tg; reDist = d; } // remember for re-acquire
-      if (d > maxDist) continue; // don't commit across the ring — take the neighbour
-      // Prefer closer and more head-on targets so we commit to one run.
-      const score = d * (1 + a * 0.9);
-      if (score < bestScore) { bestScore = score; best = tg; bestDist = d; }
+      const phiT = Math.atan2(tg.group.position.z - RING_CENTER.z, tg.group.position.x - RING_CENTER.x);
+      let delta = ((loopDir * (phiT - phiB)) % TAU + TAU) % TAU; // 0..2π ahead in loopDir
+      if (delta < 0.35) delta += TAU;        // skip the slot we're basically on
+      if (delta < bestDelta) {
+        bestDelta = delta;
+        best = tg;
+        bestDist = Math.hypot(tg.group.position.x - pos.x, tg.group.position.z - pos.z);
+      }
     }
-    if (best) return { target: best, dist: bestDist };
-    if (reacquire) return { target: reacquire, dist: reDist };
-    return this.nearest(pos);
+    return best ? { target: best, dist: bestDist } : null;
   }
 
   kill(tg) {
