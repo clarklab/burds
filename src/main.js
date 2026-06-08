@@ -12,6 +12,7 @@ const GRAVITY = 34;          // poop gravity (m/s^2)
 const MIN_ALT = 12;
 const MAX_ALT = 56;
 const YAW_RATE = 2.0;        // rad/s at full steer
+const AUTO_YAW_RATE = 1.3;   // rad/s of auto-assist turn when hands-off
 const CENTER = new THREE.Vector3(0, 0, 25);
 const ROUND_TIME = 30;       // seconds
 const BT_LEAD = 0.34;        // sim-seconds before impact to start slow-mo
@@ -308,8 +309,27 @@ class Game {
     this.input.update(dtReal);
 
     // ---- flight ----
-    // yaw from steer; soft turn back inside boundary
-    this.yaw += this.input.steerX * YAW_RATE * dt;
+    // Manual steering always wins. The moment the player lets go of the stick,
+    // an auto-pilot gently banks the bird toward the nearest target so they can
+    // focus on lining up the bomb drop.
+    const steering = Math.abs(this.input.steerX) > 0.05 || Math.abs(this.input.steerY) > 0.05;
+    let effSteerX = this.input.steerX;
+    if (steering) {
+      this.yaw += this.input.steerX * YAW_RATE * dt;
+    } else {
+      const near = this.targets.nearest(this.pos);
+      if (near) {
+        const tp = near.target.group.position;
+        const toTarget = Math.atan2(tp.x - this.pos.x, tp.z - this.pos.z);
+        const diff = ((toTarget - this.yaw + Math.PI) % (Math.PI * 2)) - Math.PI;
+        // normalized turn intent: full turn when well off-heading, eases to 0 as
+        // we line up so the bird settles over the target instead of wobbling.
+        const intent = Math.max(-1, Math.min(1, diff / 0.6));
+        this.yaw += intent * AUTO_YAW_RATE * dt;
+        effSteerX = intent; // bank visually into the assisted turn
+      }
+    }
+    // soft turn back inside boundary
     const flat = new THREE.Vector2(this.pos.x - CENTER.x, this.pos.z - CENTER.z);
     if (flat.length() > WORLD_RADIUS - 12) {
       const toCenter = Math.atan2(CENTER.x - this.pos.x, CENTER.z - this.pos.z);
@@ -320,7 +340,7 @@ class Game {
     // pitch toward steer target; roll for banking
     const targetPitch = this.input.steerY * 0.5;
     this.pitch += (targetPitch - this.pitch) * Math.min(1, dt * 5);
-    this.roll += (-this.input.steerX * 0.5 - this.roll) * Math.min(1, dtReal * 6);
+    this.roll += (-effSteerX * 0.5 - this.roll) * Math.min(1, dtReal * 6);
 
     const fwd = new THREE.Vector3(Math.sin(this.yaw), 0, Math.cos(this.yaw));
     this.pos.addScaledVector(fwd, BIRD_SPEED * dt);
