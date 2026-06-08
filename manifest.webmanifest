@@ -1,0 +1,19 @@
+{
+  "name": "Burds — a game about bird turds",
+  "short_name": "Burds",
+  "description": "Be a seagull. Drop bombs on the boardwalk. ~30 seconds a round.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "portrait",
+  "background_color": "#5ec8e0",
+  "theme_color": "#5ec8e0",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

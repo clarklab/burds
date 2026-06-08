@@ -4,7 +4,7 @@ import { readFile } from 'fs/promises';
 import { extname, join, normalize } from 'path';
 
 const ROOT = new URL('..', import.meta.url).pathname;
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' };
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.json': 'application/json', '.webmanifest': 'application/manifest+json' };
 
 const server = createServer(async (req, res) => {
   try {
