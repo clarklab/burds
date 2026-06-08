@@ -99,4 +99,9 @@ export class Audio {
   }
   slowmo() { this._tone(300, 0.5, 'sine', 0.25, 140); }
   whistle() { this._tone(700, 0.6, 'sine', 0.3, 1200); }
+  // crisp two-note "locked on" ding when the shot enters the bullseye window
+  lock() {
+    this._tone(990, 0.05, 'triangle', 0.32);
+    setTimeout(() => this._tone(1480, 0.09, 'triangle', 0.32), 55);
+  }
 }

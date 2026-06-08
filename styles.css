@@ -187,6 +187,36 @@ html, body {
   100% { transform: translateX(-50%) translateY(-40px) scale(1); opacity: 0; }
 }
 
+/* TURD CAM callout (bullet-time) */
+#turdCam {
+  position: absolute;
+  top: calc(70px + var(--safe-t));
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(0,0,0,.5);
+  color: #ff3b4e;
+  font-size: 14px;
+  font-weight: 900;
+  letter-spacing: 2.5px;
+  text-transform: uppercase;
+  padding: 6px 14px;
+  border-radius: 20px;
+  border: 2px solid rgba(255,59,78,.85);
+  box-shadow: 0 0 16px rgba(255,59,78,.45);
+  pointer-events: none;
+  animation: turdCamBlink .7s steps(1, end) infinite;
+}
+#turdCam .dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: #ff3b4e;
+  box-shadow: 0 0 8px #ff3b4e;
+}
+@keyframes turdCamBlink { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
+
 /* Poop button */
 #poopBtn {
   position: absolute;
@@ -206,6 +236,13 @@ html, body {
   transition: transform .06s, box-shadow .06s;
 }
 #poopBtn.charging { transform: scale(1.06); box-shadow: 0 4px 0 #c98a2e, 0 6px 16px rgba(0,0,0,.3); }
+/* "release NOW for a bullseye" — green glow + pulse so you can't miss the cue */
+#poopBtn.ready {
+  background: radial-gradient(circle at 38% 32%, #eafff1, #7bffae 55%, #19e06b);
+  box-shadow: 0 4px 0 #0f9b4a, 0 0 0 4px rgba(53,255,122,.55), 0 0 28px rgba(53,255,122,.85);
+  animation: readyPulse .42s ease-in-out infinite;
+}
+@keyframes readyPulse { 0%,100% { transform: scale(1.07); } 50% { transform: scale(1.17); } }
 #poopBtn.disabled { filter: grayscale(.7) brightness(.9); opacity: .55; }
 #poopBtn:active { transform: scale(.96); }
 
