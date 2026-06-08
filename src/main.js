@@ -21,7 +21,15 @@ const ROUND_TIME = 30;       // seconds
 // which a naive modulo gets wrong — and a wrong sign turns the bird the wrong
 // way, which is exactly what made the old auto-aim fight the player.
 const wrapPi = (a) => Math.atan2(Math.sin(a), Math.cos(a));
-const BT_LEAD = 0.34;        // sim-seconds before impact to start slow-mo
+const BT_LEAD = 0.5;         // sim-seconds before impact to start slow-mo (earlier = more drama)
+
+// ----- scoring / hit feel -----
+const HIT_PAD = 0.6;         // horizontal slack added to a target's catch radius (more forgiving hits)
+const BULLSEYE_ACC = 0.86;   // accuracy needed for a BULLSEYE (lower than before => easier to nail)
+const DIRECT_ACC = 0.55;     // accuracy needed for a DIRECT HIT
+// A poop predicted to land within this of a target triggers bullet-time, so even
+// near-misses get the slow-mo treatment — bullet time fires far more often.
+const BT_CATCH = 3.0;
 
 class Game {
   constructor() {
@@ -58,6 +66,11 @@ class Game {
     this.yaw = Math.PI;
     this.pitch = 0;
     this.roll = 0;
+
+    // auto-aim: the currently locked target + a low-passed turn intent, so the
+    // bird eases between targets instead of snapping when the lock changes.
+    this.autoTarget = null;
+    this.autoIntent = 0;
 
     // poop
     this.poop = null;
@@ -134,6 +147,8 @@ class Game {
     this.yaw = Math.PI;
     this.pitch = 0;
     this.roll = 0;
+    this.autoTarget = null;
+    this.autoIntent = 0;
     this.timeScale = 1; this.targetTimeScale = 1; this.btActive = false;
     if (this.poop) { this.scene.remove(this.poop.group); this.poop = null; }
     this.effects.clearDecals();
@@ -212,7 +227,9 @@ class Game {
     for (const tg of this.targets.targets) {
       if (!tg.alive) continue;
       const d = Math.hypot(landing.x - tg.group.position.x, landing.z - tg.group.position.z);
-      if (d <= tg.radius + 0.3) {
+      // A generous BT_CATCH (vs. the tighter hit radius) means even near-misses
+      // sailing close past a victim earn the slow-mo flourish.
+      if (d <= tg.radius + BT_CATCH) {
         const t = this._timeToHeight(p0.y, v0.y, tg.hitY);
         if (t !== null && t < tImpact) { tImpact = t; btTarget = tg; }
       }
@@ -225,7 +242,7 @@ class Game {
 
   resolvePoop(hit, target, acc, impact) {
     const p = this.poop;
-    const big = acc >= 0.92;
+    const big = acc >= BULLSEYE_ACC;
     this.effects.splat(impact || p.pos, hit && big);
     this.scene.remove(p.group);
 
@@ -233,8 +250,8 @@ class Game {
       this.hits++;
       this.combo++;
       let tier, mult;
-      if (acc >= 0.92) { tier = 'BULLSEYE!'; mult = 3; this.bullseyes++; this.audio.bullseye(); }
-      else if (acc >= 0.6) { tier = 'DIRECT HIT!'; mult = 2; this.audio.splat(true); }
+      if (acc >= BULLSEYE_ACC) { tier = 'BULLSEYE!'; mult = 3; this.bullseyes++; this.audio.bullseye(); }
+      else if (acc >= DIRECT_ACC) { tier = 'DIRECT HIT!'; mult = 2; this.audio.splat(true); }
       else { tier = 'SPLAT!'; mult = 1.3; this.audio.splat(false); }
 
       const base = Math.round(target.value * mult);
@@ -322,23 +339,37 @@ class Game {
     let effSteerX = this.input.steerX;
     if (steering) {
       this.yaw += this.input.steerX * YAW_RATE * dt;
+      // Keep the auto-pilot's smoothed bank in sync with the manual stick and drop
+      // the lock, so handing control back to auto-aim resumes seamlessly.
+      this.autoIntent = this.input.steerX;
+      this.autoTarget = null;
     } else {
-      // Only chase targets that are ahead of us — see nearestAhead(). Aiming the
-      // bird's nose at the target lines up the landing reticle's *direction*
-      // (the reticle sits straight ahead along the heading); the player charges
-      // to dial in the *range*. The old code chased the raw nearest target,
-      // including ones already behind/below, so it kept yanking into U-turns.
-      const near = this.targets.nearestAhead(this.pos, this.yaw);
-      if (near) {
-        const tp = near.target.group.position;
+      // Lock onto a single target and stay committed until we've actually flown
+      // past it (it leaves the forward cone or slips underneath). Re-picking the
+      // nearest target every frame is what made the bird twitch; holding the lock
+      // and only re-selecting when it's spent keeps target changes smooth. Aiming
+      // the nose at the target lines up the landing reticle's *direction*; the
+      // player charges to dial in the *range*.
+      let tg = this.autoTarget;
+      if (!tg || !this._stillAhead(tg)) {
+        const near = this.targets.nearestAhead(this.pos, this.yaw);
+        tg = near ? near.target : null;
+      }
+      this.autoTarget = tg;
+      let intent = 0;
+      if (tg) {
+        const tp = tg.group.position;
         const toTarget = Math.atan2(tp.x - this.pos.x, tp.z - this.pos.z);
         const diff = wrapPi(toTarget - this.yaw);
         // normalized turn intent: full turn when well off-heading, eases to 0 as
         // we line up so the bird settles over the target instead of wobbling.
-        const intent = Math.max(-1, Math.min(1, diff / 0.6));
-        this.yaw += intent * AUTO_YAW_RATE * dt;
-        effSteerX = intent; // bank visually into the assisted turn
+        intent = Math.max(-1, Math.min(1, diff / 0.6));
       }
+      // Low-pass the turn intent so switching targets eases in over a fraction of
+      // a second rather than snapping the heading across the gap between them.
+      this.autoIntent += (intent - this.autoIntent) * Math.min(1, dt * 4);
+      this.yaw += this.autoIntent * AUTO_YAW_RATE * dt;
+      effSteerX = this.autoIntent; // bank visually into the assisted turn
     }
     // soft turn back inside boundary
     const flat = new THREE.Vector2(this.pos.x - CENTER.x, this.pos.z - CENTER.z);
@@ -415,6 +446,19 @@ class Game {
     }
   }
 
+  // Is `tg` still a sensible auto-aim lock — alive, ahead of us within the
+  // forward cone, and not already directly underneath? Used to hold the lock so
+  // the bird commits to one run instead of twitching between targets each frame.
+  _stillAhead(tg) {
+    if (!tg.alive) return false;
+    const dx = tg.group.position.x - this.pos.x;
+    const dz = tg.group.position.z - this.pos.z;
+    const d = Math.hypot(dx, dz);
+    if (d < 10) return false;                 // flown over / about to pass under us
+    const rel = wrapPi(Math.atan2(dx, dz) - this.yaw);
+    return Math.abs(rel) < Math.PI * 0.6;     // still in the forward cone
+  }
+
   _placeBird() {
     this.bird.position.copy(this.pos);
     this.bird.rotation.set(0, 0, 0);
@@ -484,10 +528,12 @@ class Game {
         const dx = p.landing.x - tg.group.position.x;
         const dz = p.landing.z - tg.group.position.z;
         const d = Math.hypot(dx, dz);
-        if (d <= tg.radius + 0.3 && d < bestD) { bestD = d; best = tg; }
+        if (d <= tg.radius + HIT_PAD && d < bestD) { bestD = d; best = tg; }
       }
       if (best) {
-        const acc = THREE.MathUtils.clamp(1 - bestD / (best.radius + 0.15), 0, 1);
+        // Accuracy ramps from 1 at dead-centre to 0 at the edge of the (padded)
+        // catch radius, so a wider sweet spot now counts as a bullseye.
+        const acc = THREE.MathUtils.clamp(1 - bestD / (best.radius + HIT_PAD), 0, 1);
         const impact = best.group.position.clone(); impact.y = best.hitY;
         p.pos.copy(impact);
         this.resolvePoop(true, best, acc, impact);
@@ -514,12 +560,20 @@ class Game {
         : (this.btImpact ? this.btImpact.clone() : focus.clone());
       const span = Math.max(2, poopPos.y - focus.y);
       const anchor = focus.clone().lerp(poopPos, 0.5);          // middle of the drop
-      // 3/4 view: mostly to the side, a touch behind the bird's heading
+      // Near side-on view: mostly to the side with only a hint of "back", so the
+      // whole falling column — turd up top, target at the bottom — reads as a
+      // clean profile rather than a 3/4 angle.
       const side = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
       const back = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
-      const dir = side.multiplyScalar(0.85).add(back.multiplyScalar(0.45)).normalize();
-      const dist = THREE.MathUtils.clamp(span * 0.85 + 6, 9, 24);
-      desired = anchor.clone().add(dir.multiplyScalar(dist)).add(new THREE.Vector3(0, span * 0.18 + 2.5, 0));
+      const dir = side.multiplyScalar(1.0).add(back.multiplyScalar(0.22)).normalize();
+      // Pull back far enough that the entire vertical span fits in frame with a
+      // margin, so the turd is *guaranteed* to stay in view even on a tall drop
+      // (the old fixed clamp let it clip out the top). Derive the fit distance
+      // straight from the camera's vertical FOV.
+      const halfV = THREE.MathUtils.degToRad(this.camera.fov * 0.5);
+      const fitDist = (span * 0.5 + 1.5) / Math.tan(halfV * 0.7);
+      const dist = THREE.MathUtils.clamp(Math.max(span * 0.7 + 7, fitDist), 12, 80);
+      desired = anchor.clone().add(dir.multiplyScalar(dist)).add(new THREE.Vector3(0, span * 0.12 + 2, 0));
       lookAt = anchor;
       this.camera.position.lerp(desired, Math.min(1, dt * 9));
       this._camLookAt = this._camLookAt || lookAt.clone();
