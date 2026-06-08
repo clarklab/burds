@@ -8,6 +8,8 @@
   <meta name="theme-color" content="#5ec8e0" />
   <title>Burds — a game about bird turds</title>
   <link rel="stylesheet" href="./styles.css" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="./icon.svg" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💩</text></svg>" />
   <script type="importmap">
   {
@@ -90,5 +92,49 @@
   </div>
 
   <script type="module" src="./src/main.js"></script>
+
+  <!-- Offline support + auto-update ("JS buster"). Once you've loaded the
+       game, the service worker keeps it playable with no network. When you're
+       back online it quietly checks sw.js, and if a new build shipped it
+       swaps in and reloads onto it. -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', async () => {
+        try {
+          const reg = await navigator.serviceWorker.register('./sw.js');
+
+          // A new worker installed while an old one is in control => a fresh
+          // build is waiting. Tell it to take over right away.
+          reg.addEventListener('updatefound', () => {
+            const sw = reg.installing;
+            if (!sw) return;
+            sw.addEventListener('statechange', () => {
+              if (sw.state === 'installed' && navigator.serviceWorker.controller) {
+                sw.postMessage({ type: 'SKIP_WAITING' });
+              }
+            });
+          });
+
+          // When the new worker takes control, reload once onto the new build.
+          let reloaded = false;
+          navigator.serviceWorker.addEventListener('controllerchange', () => {
+            if (reloaded) return;
+            reloaded = true;
+            window.location.reload();
+          });
+
+          // Re-check for a new build whenever we regain connectivity or focus.
+          const checkForUpdate = () => reg.update().catch(() => {});
+          window.addEventListener('online', checkForUpdate);
+          document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') checkForUpdate();
+          });
+        } catch (err) {
+          // Offline-first is best-effort; the game still runs without it.
+          console.warn('Service worker registration failed:', err);
+        }
+      });
+    }
+  </script>
 </body>
 </html>

@@ -22,13 +22,31 @@ python3 -m http.server 8000
 Three.js is vendored locally in `vendor/` so the game runs with no external
 network calls.
 
+## Offline & updates
+
+The game ships a service worker (`sw.js`) and a web app manifest, so it's a
+proper installable PWA:
+
+- **Plays offline.** Load it once over the network and the service worker
+  precaches every asset (HTML, CSS, all of `src/`, and the vendored Three.js).
+  After that first play it boots from cache — no connection required — and you
+  can add it to your home screen for a fullscreen, tap-to-launch experience.
+- **Auto-updates ("JS buster").** When you ship changes, bump `CACHE_VERSION`
+  in `sw.js`. The next time a player has internet (the page re-checks on focus
+  and on the `online` event), the new worker precaches the fresh files, drops
+  the old cache, takes over, and reloads onto the new build — no stale
+  JavaScript left behind.
+
+> Service workers require a secure context, so they're active over `https://`
+> and on `http://localhost` (handy for local testing).
+
 ## How to play
 
 - **Drag anywhere** on the screen to fly and steer (a virtual joystick). Drag
   up to climb, down to dive, left/right to bank.
-- **Let go** and an auto-pilot gently banks the bird toward the nearest target,
-  so you can focus on charging and dropping the bomb. Grab the stick again any
-  time to take back full control.
+- **Let go** and an auto-pilot banks the bird onto the nearest target *ahead*
+  of you — lining up the drop direction so you only have to charge for range.
+  Grab the stick again any time to take back full control.
 - **Hold the 💩 button** to charge power, then **release** to drop. A quick tap
   drops almost straight down; a full charge flings it far ahead.
 - A **reticle** on the ground shows exactly where your poop will land — it turns
@@ -54,8 +72,11 @@ so you'll need to lead them).
 ## Project layout
 
 ```
-index.html        # entry, import map, HUD + menu markup
+index.html        # entry, import map, HUD + menu markup, SW registration
 styles.css        # mobile-first UI
+sw.js             # service worker: offline cache + version-based buster
+manifest.webmanifest  # PWA manifest (installable, fullscreen)
+icon.svg          # app / home-screen icon
 vendor/           # vendored three.module.js
 src/
   main.js         # game loop, flight, physics, bullet time, scoring

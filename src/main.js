@@ -12,9 +12,15 @@ const GRAVITY = 34;          // poop gravity (m/s^2)
 const MIN_ALT = 12;
 const MAX_ALT = 56;
 const YAW_RATE = 2.0;        // rad/s at full steer
-const AUTO_YAW_RATE = 1.3;   // rad/s of auto-assist turn when hands-off
+const AUTO_YAW_RATE = 2.6;   // rad/s of auto-assist turn when hands-off (snappy enough to actually line up a run)
 const CENTER = new THREE.Vector3(0, 0, 25);
 const ROUND_TIME = 30;       // seconds
+
+// Shortest signed angle for `a`, always in [-PI, PI]. Using atan2 (rather than
+// a `% 2*PI`) is robust even when yaw has wound up to a large unbounded value,
+// which a naive modulo gets wrong — and a wrong sign turns the bird the wrong
+// way, which is exactly what made the old auto-aim fight the player.
+const wrapPi = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 const BT_LEAD = 0.34;        // sim-seconds before impact to start slow-mo
 
 class Game {
@@ -317,11 +323,16 @@ class Game {
     if (steering) {
       this.yaw += this.input.steerX * YAW_RATE * dt;
     } else {
-      const near = this.targets.nearest(this.pos);
+      // Only chase targets that are ahead of us — see nearestAhead(). Aiming the
+      // bird's nose at the target lines up the landing reticle's *direction*
+      // (the reticle sits straight ahead along the heading); the player charges
+      // to dial in the *range*. The old code chased the raw nearest target,
+      // including ones already behind/below, so it kept yanking into U-turns.
+      const near = this.targets.nearestAhead(this.pos, this.yaw);
       if (near) {
         const tp = near.target.group.position;
         const toTarget = Math.atan2(tp.x - this.pos.x, tp.z - this.pos.z);
-        const diff = ((toTarget - this.yaw + Math.PI) % (Math.PI * 2)) - Math.PI;
+        const diff = wrapPi(toTarget - this.yaw);
         // normalized turn intent: full turn when well off-heading, eases to 0 as
         // we line up so the bird settles over the target instead of wobbling.
         const intent = Math.max(-1, Math.min(1, diff / 0.6));
@@ -333,9 +344,12 @@ class Game {
     const flat = new THREE.Vector2(this.pos.x - CENTER.x, this.pos.z - CENTER.z);
     if (flat.length() > WORLD_RADIUS - 12) {
       const toCenter = Math.atan2(CENTER.x - this.pos.x, CENTER.z - this.pos.z);
-      let diff = ((toCenter - this.yaw + Math.PI) % (Math.PI * 2)) - Math.PI;
+      const diff = wrapPi(toCenter - this.yaw);
       this.yaw += diff * Math.min(1, dt * 1.4);
     }
+    // Keep yaw bounded so the steering math (and everything else) stays sane
+    // over a full round; every consumer reads it through sin/cos so this is safe.
+    this.yaw = wrapPi(this.yaw);
 
     // pitch toward steer target; roll for banking
     const targetPitch = this.input.steerY * 0.5;

@@ -257,6 +257,30 @@ export class TargetManager {
     return best ? { target: best, dist: bd } : null;
   }
 
+  // Pick the best target to line up a bombing run on. Unlike nearest(), this
+  // only considers targets *ahead* of the bird (within a forward cone) and
+  // beyond a minimum distance, so the autopilot stops trying to U-turn back
+  // onto things it has already flown over. Falls back to the global nearest
+  // when there's nothing ahead, so the bird will still come around to hunt.
+  nearestAhead(pos, yaw, { maxAngle = Math.PI * 0.55, minDist = 14 } = {}) {
+    let best = null, bestScore = Infinity, bestDist = 0;
+    for (const tg of this.targets) {
+      if (!tg.alive) continue;
+      const dx = tg.group.position.x - pos.x;
+      const dz = tg.group.position.z - pos.z;
+      const d = Math.hypot(dx, dz);
+      if (d < minDist) continue; // basically underneath / just passed
+      // bearing of the target relative to the current heading, in [-PI, PI]
+      const rel = Math.atan2(Math.sin(Math.atan2(dx, dz) - yaw),
+                             Math.cos(Math.atan2(dx, dz) - yaw));
+      if (Math.abs(rel) > maxAngle) continue; // behind us / too far to the side
+      // Prefer closer and more head-on targets so we commit to one run.
+      const score = d * (1 + Math.abs(rel) * 0.9);
+      if (score < bestScore) { bestScore = score; best = tg; bestDist = d; }
+    }
+    return best ? { target: best, dist: bestDist } : this.nearest(pos);
+  }
+
   kill(tg) {
     tg.alive = false;
     tg.dying = 0;
