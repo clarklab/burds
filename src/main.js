@@ -11,7 +11,7 @@ const POWER_SPEED = 34;      // extra forward speed at full charge
 const GRAVITY = 34;          // poop gravity (m/s^2)
 const MIN_ALT = 12;
 const MAX_ALT = 56;
-const YAW_RATE = 1.7;        // rad/s at full steer
+const YAW_RATE = 2.0;        // rad/s at full steer
 const CENTER = new THREE.Vector3(0, 0, 25);
 const ROUND_TIME = 30;       // seconds
 const BT_LEAD = 0.34;        // sim-seconds before impact to start slow-mo
@@ -319,7 +319,7 @@ class Game {
 
     // pitch toward steer target; roll for banking
     const targetPitch = this.input.steerY * 0.5;
-    this.pitch += (targetPitch - this.pitch) * Math.min(1, dt * 4);
+    this.pitch += (targetPitch - this.pitch) * Math.min(1, dt * 5);
     this.roll += (-this.input.steerX * 0.5 - this.roll) * Math.min(1, dtReal * 6);
 
     const fwd = new THREE.Vector3(Math.sin(this.yaw), 0, Math.cos(this.yaw));
