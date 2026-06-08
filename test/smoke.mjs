@@ -79,7 +79,7 @@ const hit = await page.evaluate(async () => {
   const v0 = g._launchVel(0);
   const land = g._predictLanding(p0, v0);
   const tg = g.targets.targets[0];
-  tg.alive = true; tg.dir = null; tg.speed = 0; // freeze for a repeatable shot
+  tg.alive = true; tg.orbit = false; // freeze any ring drift for a repeatable shot
   tg.group.position.set(land.x, 0, land.z);
   if (tg.bullseye) tg.bullseye.visible = true;
   g._dbg = { land: [land.x.toFixed(1), land.z.toFixed(1)], tgType: tg.key, radius: tg.radius };
@@ -114,7 +114,7 @@ await page.evaluate(() => {
   const v0 = g._launchVel(0);
   const land = g._predictLanding(p0, v0);
   const tg = g.targets.targets[0];
-  tg.alive = true; tg.dir = null; tg.speed = 0;
+  tg.alive = true; tg.orbit = false;
   tg.group.position.set(land.x, 0, land.z);
   if (tg.bullseye) tg.bullseye.visible = true;
   g.firePoop(0);
