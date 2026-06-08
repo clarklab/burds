@@ -1,4 +1,4 @@
-# 🐦💩 GULL DUMP — Beach Bombing Run
+# 🐦💩 Burds — a game about bird turds
 
 A mobile-first, browser-based 3D game where **you are a seagull** cruising the
 boardwalk, dropping bombs on unsuspecting beachgoers. Tap to poop, hold to poop
