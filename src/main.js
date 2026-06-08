@@ -28,6 +28,8 @@ const BT_LEAD = 0.5;         // sim-seconds before impact to start slow-mo (earl
 const HIT_PAD = 0.6;         // horizontal slack added to a target's catch radius (more forgiving hits)
 const BULLSEYE_ACC = 0.86;   // accuracy needed for a BULLSEYE (lower than before => easier to nail)
 const DIRECT_ACC = 0.55;     // accuracy needed for a DIRECT HIT
+const TIME_BONUS_HIT = 5;    // seconds added to the timer for any hit
+const TIME_BONUS_BULLSEYE = 10; // seconds added to the timer for a bullseye (instead of the hit bonus)
 // A poop predicted to land within this of a target triggers bullet-time, so even
 // near-misses get the slow-mo treatment — bullet time fires far more often.
 const BT_CATCH = 3.0;
@@ -273,6 +275,12 @@ class Game {
       const gain = Math.round(base * comboMult);
       this.score += gain;
       this.dom.score.textContent = this.score;
+
+      // reward a clean shot with extra time on the clock
+      this.timeLeft += (acc >= BULLSEYE_ACC) ? TIME_BONUS_BULLSEYE : TIME_BONUS_HIT;
+      const shownTime = Math.ceil(this.timeLeft);
+      this.dom.timer.textContent = shownTime;
+      this.dom.timerPill.classList.toggle('warn', this.timeLeft <= 5);
 
       this._showToast(`${tier} +${gain}`);
       this._showCombo();
