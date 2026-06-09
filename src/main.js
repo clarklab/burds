@@ -214,6 +214,7 @@ class Game {
       menuBest: document.getElementById('menuBest'),
       levelPick: document.getElementById('levelPick'),
       howTo: document.getElementById('howTo'),
+      menuBoard: document.getElementById('menuBoard'),
       menuBoardTitle: document.getElementById('menuBoardTitle'),
       goTitle: document.getElementById('goTitle'),
       logoStage: document.getElementById('logoStage'),
@@ -415,7 +416,11 @@ class Game {
   }
 
   _renderMenuBoard() {
-    this._fillBoard(this.dom.menuBoardList, this._lbScores || [], 5, this._myId);
+    // On the welcome screen we keep things compact: if there are no scores yet
+    // for this level, hide the board entirely rather than show an empty state.
+    const scores = this._lbScores || [];
+    if (this.dom.menuBoard) this.dom.menuBoard.classList.toggle('hidden', scores.length === 0);
+    this._fillBoard(this.dom.menuBoardList, scores, 3, this._myId);
   }
 
   _renderGoBoard() {

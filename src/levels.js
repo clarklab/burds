@@ -69,11 +69,9 @@ export const LEVELS = [
     controls: 'Strafe + dive',
     build: buildWorld,
     howto: [
-      { icon: '👆', html: 'Drag left/right to <b>strafe</b> down the lane (up/down to dive)' },
-      { icon: '🎯', html: 'Line up under a target — the <b>reticle hones</b> from big to tight' },
-      { icon: '💩', html: '<b>Release</b> when it’s tight to splat. Hold longer = <b>bigger turd</b>' },
-      { icon: '⭐', html: 'Dead-center = <b>bullseye</b>, big points' },
-      { icon: '⚡', html: 'Bomb the gold <b>SUPER TURD</b> for 15s of giant turds' },
+      { icon: '👆', html: 'Drag to <b>strafe</b> &amp; dive — line up under a target' },
+      { icon: '💩', html: '<b>Hold</b> to grow a bigger turd, <b>release</b> when the reticle hones tight' },
+      { icon: '⚡', html: 'Dead-center = <b>bullseye</b>; bomb the gold <b>SUPER TURD</b> for giant turds' },
     ],
   },
   {
@@ -86,11 +84,9 @@ export const LEVELS = [
     circuit: { startZ: 40, frontTurnZ: -64, backTurnZ: 44, halfWidth: 10 },
     layout: weddingLayout,
     howto: [
-      { icon: '👆', html: 'You loop the aisle on <b>auto-pilot</b> — <b>steer</b> left/right &amp; dive to aim' },
-      { icon: '💩', html: '<b>Hold</b> to grow a huge turd; big ones <b>splash whole rows</b>' },
-      { icon: '💒', html: 'The <b>couple &amp; priest</b> up front are worth <b>double</b>' },
-      { icon: '🔁', html: 'You loop past the crowd again and again — chain combos' },
-      { icon: '⚡', html: 'Gold <b>SUPER TURD</b>s keep popping up for giant turds' },
+      { icon: '👆', html: 'Auto-pilot the aisle — <b>steer</b> &amp; dive to aim' },
+      { icon: '💩', html: '<b>Hold</b> for a huge turd that <b>splashes whole rows</b>' },
+      { icon: '💒', html: '<b>Couple &amp; priest</b> score <b>double</b>; gold <b>SUPER TURD</b>s = giant turds' },
     ],
   },
   {
@@ -104,11 +100,9 @@ export const LEVELS = [
     mosh: true,
     layout: concertLayout,
     howto: [
-      { icon: '👆', html: 'Auto-pilot over the pit — <b>steer</b> left/right &amp; dive to aim' },
+      { icon: '👆', html: 'Auto-pilot the pit — <b>steer</b> &amp; dive to aim' },
       { icon: '💩', html: '<b>Hold</b> for a giant turd that <b>splashes a mosh of fans</b>' },
-      { icon: '🎸', html: '<b>Band members</b> on the stage are worth <b>double</b>' },
-      { icon: '🔁', html: 'Loop the pit over and over — chain massive combos' },
-      { icon: '⚡', html: 'Gold <b>SUPER TURD</b>s keep dropping for total mayhem' },
+      { icon: '🎸', html: '<b>Band</b> scores <b>double</b>; gold <b>SUPER TURD</b>s = total mayhem' },
     ],
   },
 ];
