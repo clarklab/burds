@@ -129,14 +129,32 @@ const sup = await page.evaluate(async () => {
     superTimer: +g.superTimer.toFixed(2),
     spinning: g.superSpin > 0,
     auraVisible: g.superAura.group.visible,
+    stack1: g.superStack,
+    mult1: g._superScoreMult(),
     scaleBefore: +scaleBefore.toFixed(2),
     scaleSuper: +g._turdScale(1).toFixed(2),
     badgeShown: !document.getElementById('superBadge').classList.contains('hidden'),
   };
+  // stack two more super turds to reach TURD FIRE (3 stacks)
+  const t1 = g.superTimer;
+  g._hitSuperTurd();                       // stack 2
+  out.timerAfterStack = +g.superTimer.toFixed(2); // should be > t1 (time added)
+  out.stack2 = g.superStack; out.mult2 = g._superScoreMult();
+  out.scaleStack2 = +g._turdScale(1).toFixed(2);  // bigger than scaleSuper
+  g._hitSuperTurd();                       // stack 3 => TURD FIRE
+  out.stack3 = g.superStack;
+  out.fireMode = g.fireMode;
+  out.fireAura = g.fireAura.group.visible;
+  out.badgeFire = document.getElementById('superBadge').classList.contains('fire');
+  out.mult3 = g._superScoreMult();
+  // a drop in fire mode should produce a flagged fireball
+  g.firePoop(1);
+  out.poopIsFire = !!(g.poop && g.poop.fire);
+  out.timerWasAdded = out.timerAfterStack > t1;
   // clean up so the rest of the run starts from a normal state
-  g.superTimer = 0; g.superSpin = 0; g.superAura.group.visible = false;
-  g.dom.poopBtn.classList.remove('super');
-  g.dom.superBadge.classList.add('hidden');
+  if (g.poop) { g.scene.remove(g.poop.group); g.poop = null; }
+  g._endSuper();
+  g.superSpin = 0; g.btActive = false; g.btHold = 0;
   g.timeScale = 1; g.targetTimeScale = 1;
   g.input.setEnabled(true);
   return out;
@@ -144,6 +162,36 @@ const sup = await page.evaluate(async () => {
 console.log('SUPER TEST:', JSON.stringify(sup));
 if (!(sup.superTimer > 0 && sup.auraVisible && sup.scaleSuper > sup.scaleBefore)) {
   throw new Error('SUPER TURD MODE did not activate as expected: ' + JSON.stringify(sup));
+}
+if (!(sup.mult1 === 1.5 && sup.mult2 === 2 && sup.mult3 === 2.5)) {
+  throw new Error('Super score multiplier did not step 1.5/2/2.5: ' + JSON.stringify(sup));
+}
+if (!(sup.scaleStack2 > sup.scaleSuper && sup.timerWasAdded)) {
+  throw new Error('Stacking did not grow turds / add time: ' + JSON.stringify(sup));
+}
+if (!(sup.stack3 === 3 && sup.fireMode && sup.fireAura && sup.badgeFire && sup.poopIsFire)) {
+  throw new Error('TURD FIRE did not ignite at 3 stacks: ' + JSON.stringify(sup));
+}
+
+// --- charging finger can steer: hold the poop button and drag, and steerX
+//     should follow the drag (then reset on release) ---
+await page.evaluate(() => { window.game.input.steerX = 0; window.game.input.steerY = 0; });
+{
+  const btn = await page.$('#poopBtn');
+  const bb = await btn.boundingBox();
+  const cx = bb.x + bb.width / 2, cy = bb.y + bb.height / 2;
+  await page.mouse.move(cx, cy);
+  await page.mouse.down();
+  await page.mouse.move(cx + 140, cy, { steps: 6 });
+  const steerRight = await page.evaluate(() => window.game.input.steerX);
+  await page.mouse.move(cx - 140, cy, { steps: 6 });
+  const steerLeft = await page.evaluate(() => window.game.input.steerX);
+  await page.mouse.up();
+  const steerReleased = await page.evaluate(() => window.game.input.steerX);
+  console.log('STEER TEST:', JSON.stringify({ steerRight, steerLeft, steerReleased }));
+  if (!(steerRight > 0.3 && steerLeft < -0.3 && steerReleased === 0)) {
+    throw new Error('charge-finger steering failed: ' + JSON.stringify({ steerRight, steerLeft, steerReleased }));
+  }
 }
 
 // --- capture a clean bullet-time frame: frozen target, tap straight down ---

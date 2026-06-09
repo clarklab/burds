@@ -301,6 +301,67 @@ export function buildPalm() {
 }
 
 // ---------------------------------------------------------------------------
+// Croatia coastline flora: slender cypresses, umbrella pines, and seaside
+// rocks — the look of the Dalmatian coast.
+// ---------------------------------------------------------------------------
+
+// Italian cypress: a tall, slender, dark-green column. The signature tree of
+// the Adriatic coast.
+export function buildCypress() {
+  const g = new THREE.Group();
+  const h = 6 + Math.random() * 3.5;
+  const green = pick([0x2f5d3a, 0x27503a, 0x355f3d, 0x224a31]);
+  const trunk = cyl(0.16, 0.24, h * 0.2, 0x6b4a2a, 6);
+  trunk.position.y = h * 0.1;
+  g.add(trunk);
+  // a tall slender cone, with a thinner one stacked for a tapered tip
+  const body = cone(0.72, h * 0.95, green, 8);
+  body.position.y = h * 0.55;
+  g.add(body);
+  const tip = cone(0.42, h * 0.4, green, 7);
+  tip.position.y = h * 0.92;
+  g.add(tip);
+  g.scale.setScalar(0.85 + Math.random() * 0.4);
+  return g;
+}
+
+// Mediterranean stone pine: a bare trunk under a wide, flat umbrella canopy.
+export function buildPine() {
+  const g = new THREE.Group();
+  const h = 5 + Math.random() * 2.5;
+  const trunk = cyl(0.18, 0.32, h, 0x7a5230, 6);
+  trunk.position.y = h / 2;
+  trunk.rotation.z = (Math.random() - 0.5) * 0.12;
+  g.add(trunk);
+  const green = pick([0x3c7d4f, 0x356b46, 0x46915a, 0x2f6e44]);
+  // wide flattened canopy built from a couple of squashed domes
+  const canopy = sphere(2.5, green, 8); canopy.scale.set(1, 0.38, 1); canopy.position.y = h + 0.25;
+  g.add(canopy);
+  const c2 = sphere(1.7, green, 7); c2.scale.set(1, 0.5, 1);
+  c2.position.set((Math.random() - 0.5) * 1.4, h + 0.7, (Math.random() - 0.5) * 1.4);
+  g.add(c2);
+  g.scale.setScalar(0.9 + Math.random() * 0.4);
+  return g;
+}
+
+// A cluster of low-poly seaside boulders.
+export function buildRock() {
+  const g = new THREE.Group();
+  const grays = [0x8a8d92, 0x9a9690, 0x7c7f84, 0xa6a29a, 0x6f7378];
+  const n = 1 + ((Math.random() * 3) | 0);
+  for (let i = 0; i < n; i++) {
+    const r = 0.6 + Math.random() * 1.5;
+    const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(r, 0), mat(pick(grays)));
+    rock.position.set((Math.random() - 0.5) * 2.4, r * 0.42, (Math.random() - 0.5) * 2.4);
+    rock.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 3);
+    rock.scale.y = 0.65 + Math.random() * 0.3;
+    rock.castShadow = true; rock.receiveShadow = true;
+    g.add(rock);
+  }
+  return g;
+}
+
+// ---------------------------------------------------------------------------
 // THE SUPER TURD: a rare, golden, glowing pickup. Bombing it triggers SUPER
 // TURD MODE. Built to read as obviously special — gold poop swirl on a glowing
 // pad, a spinning halo and floating sparkles.
@@ -353,6 +414,27 @@ export function buildPoop() {
   const tip = cone(0.12, 0.3, 0x5e3c1f, 6); tip.position.y = 0.68;
   g.add(s1, s2, s3, tip);
   g.userData.spinnable = [s1, s2, s3, tip];
+  return g;
+}
+
+// A flaming-comet projectile for TURD FIRE mode: a molten core wrapped in an
+// additive glow, with a tail cone (the comet streak is filled in by trailing
+// embers spawned each frame).
+export function buildFireball() {
+  const g = new THREE.Group();
+  const glow = new THREE.Mesh(
+    new THREE.SphereGeometry(0.82, 10, 10),
+    new THREE.MeshBasicMaterial({ color: 0xff2b00, transparent: true, opacity: 0.45, blending: THREE.AdditiveBlending, depthWrite: false }),
+  );
+  const mid = new THREE.Mesh(new THREE.SphereGeometry(0.55, 9, 9), new THREE.MeshBasicMaterial({ color: 0xff7a18 }));
+  const core = new THREE.Mesh(new THREE.SphereGeometry(0.4, 8, 8), new THREE.MeshBasicMaterial({ color: 0xffe9a8 }));
+  const tail = new THREE.Mesh(
+    new THREE.ConeGeometry(0.42, 1.3, 7),
+    new THREE.MeshBasicMaterial({ color: 0xff5a00, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false }),
+  );
+  tail.position.y = 0.85; // points up = trails behind the falling comet
+  g.add(glow, mid, core, tail);
+  g.userData.spinnable = [core, mid];
   return g;
 }
 

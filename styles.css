@@ -241,9 +241,28 @@ html, body {
   animation: superGlow .5s ease-in-out infinite;
 }
 #superBadge .bolt { filter: drop-shadow(0 0 5px #fff); }
+#superBadge #superMult {
+  color: #fff;
+  background: rgba(255,210,63,.28);
+  padding: 1px 8px;
+  border-radius: 10px;
+  letter-spacing: 1px;
+}
 @keyframes superGlow {
   0%,100% { box-shadow: 0 0 16px rgba(255,210,63,.45); }
   50% { box-shadow: 0 0 32px rgba(255,210,63,.95); }
+}
+/* TURD FIRE — the badge runs red-hot once three super turds stack */
+#superBadge.fire {
+  color: #ff7a3d;
+  border-color: rgba(255,90,0,.95);
+  text-shadow: 0 0 10px rgba(255,90,0,.9);
+  animation: fireGlow .4s ease-in-out infinite;
+}
+#superBadge.fire #superMult { background: rgba(255,90,0,.32); }
+@keyframes fireGlow {
+  0%,100% { box-shadow: 0 0 16px rgba(255,90,0,.5); }
+  50% { box-shadow: 0 0 34px rgba(255,90,0,1); }
 }
 
 /* Poop button */
@@ -276,6 +295,11 @@ html, body {
 #poopBtn.super {
   background: radial-gradient(circle at 38% 32%, #fffbe6, #ffe24a 50%, #ffae00);
   box-shadow: 0 6px 0 #b8860b, 0 0 0 4px rgba(255,210,63,.6), 0 0 30px rgba(255,210,63,.9);
+}
+/* TURD FIRE — the button turns into a blazing ember */
+#poopBtn.fire {
+  background: radial-gradient(circle at 38% 32%, #fff3d6, #ff8a1e 45%, #e01b00);
+  box-shadow: 0 6px 0 #7a1500, 0 0 0 4px rgba(255,90,0,.6), 0 0 34px rgba(255,90,0,.95);
 }
 #poopBtn.disabled { filter: grayscale(.7) brightness(.9); opacity: .55; }
 #poopBtn:active { transform: scale(.96); }

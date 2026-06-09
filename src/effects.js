@@ -10,17 +10,20 @@ export class Effects {
     this.bursts = [];
     this.decals = [];
     this.splashes = [];
+    this.embers = [];
   }
 
-  // A juicy splat of brown blobs at a point, plus the lingering flat ground
-  // decal. `scale` tracks the size of the turd that made it.
-  splat(pos, big = false, scale = 1) {
+  // A juicy splat of blobs at a point, plus the lingering flat ground decal.
+  // `scale` tracks turd size; `fire` swaps in molten-lava colours.
+  splat(pos, big = false, scale = 1, fire = false) {
+    const blobA = fire ? 0xff4500 : 0x6b4626;
+    const blobB = fire ? 0xff7a18 : 0x7a5230;
     const group = new THREE.Group();
     const n = big ? 16 : 10;
     const parts = [];
     for (let i = 0; i < n; i++) {
       const r = (0.12 + Math.random() * 0.22) * scale;
-      const m = new THREE.Mesh(new THREE.SphereGeometry(r, 5, 5), mat(i % 3 === 0 ? 0x6b4626 : 0x7a5230));
+      const m = new THREE.Mesh(new THREE.SphereGeometry(r, 5, 5), mat(i % 3 === 0 ? blobA : blobB));
       const ang = Math.random() * Math.PI * 2;
       const sp = 4 + Math.random() * 8;
       m.position.copy(pos);
@@ -33,10 +36,10 @@ export class Effects {
     this.scene.add(group);
     this.bursts.push({ group, parts, t: 0, life: 1.2 });
 
-    // flat decal on the ground
+    // flat decal on the ground (a charred scorch for fireballs)
     const decal = new THREE.Mesh(
       new THREE.CircleGeometry((big ? 1.4 : 0.9) * scale, 12),
-      new THREE.MeshLambertMaterial({ color: 0x6b4626, transparent: true, opacity: 0.85, polygonOffset: true, polygonOffsetFactor: -2 }),
+      new THREE.MeshLambertMaterial({ color: fire ? 0x5a1500 : 0x6b4626, transparent: true, opacity: 0.85, polygonOffset: true, polygonOffsetFactor: -2 }),
     );
     decal.rotation.x = -Math.PI / 2;
     decal.position.set(pos.x, 0.12, pos.z);
@@ -53,11 +56,11 @@ export class Effects {
   // An extra burst that fires only when a *target* gets hit: an expanding shock
   // ring at the point of impact plus a spray of droplets kicked up and out. This
   // rides on top of the flat splat for a satisfying "direct hit" pop.
-  splash(pos, scale = 1) {
+  splash(pos, scale = 1, fire = false) {
     // expanding shock ring (its own material so opacity fades per-splash)
     const ring = new THREE.Mesh(
       new THREE.RingGeometry(0.35, 0.75, 22),
-      new THREE.MeshBasicMaterial({ color: 0x9c6b3f, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false }),
+      new THREE.MeshBasicMaterial({ color: fire ? 0xff5a00 : 0x9c6b3f, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false }),
     );
     ring.rotation.x = -Math.PI / 2;
     ring.position.set(pos.x, (pos.y || 0) + 0.15, pos.z);
@@ -67,12 +70,14 @@ export class Effects {
 
     // droplets kicked upward and outward — splashier (faster, lighter) than the
     // splat blobs, and reusing the gravity-driven burst path.
+    const dropA = fire ? 0xff7a18 : 0x7a5230;
+    const dropB = fire ? 0xffd24a : 0x9c6b3f;
     const group = new THREE.Group();
     const parts = [];
     const n = Math.round(12 * scale);
     for (let i = 0; i < n; i++) {
       const r = (0.08 + Math.random() * 0.14) * scale;
-      const m = new THREE.Mesh(new THREE.SphereGeometry(r, 5, 5), mat(i % 2 === 0 ? 0x7a5230 : 0x9c6b3f));
+      const m = new THREE.Mesh(new THREE.SphereGeometry(r, 5, 5), mat(i % 2 === 0 ? dropA : dropB));
       m.position.copy(pos);
       group.add(m);
       const ang = Math.random() * Math.PI * 2;
@@ -84,6 +89,19 @@ export class Effects {
     }
     this.scene.add(group);
     this.bursts.push({ group, parts, t: 0, life: 0.9 });
+  }
+
+  // A single glowing ember left behind a falling fireball — spawn one per frame
+  // while a TURD FIRE comet is in flight to draw the streaking lava trail.
+  ember(pos, scale = 1) {
+    const r = (0.12 + Math.random() * 0.18) * Math.min(2.5, scale);
+    const m = new THREE.Mesh(
+      new THREE.SphereGeometry(r, 6, 6),
+      new THREE.MeshBasicMaterial({ color: Math.random() < 0.5 ? 0xff7a18 : 0xffd24a, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }),
+    );
+    m.position.set(pos.x + (Math.random() - 0.5) * 0.4, pos.y + (Math.random() - 0.5) * 0.3, pos.z + (Math.random() - 0.5) * 0.4);
+    this.scene.add(m);
+    this.embers.push({ m, t: 0, life: 0.4 + Math.random() * 0.25, vy: 1 + Math.random() * 2 });
   }
 
   update(dt) {
@@ -124,6 +142,19 @@ export class Effects {
         this.splashes.splice(i, 1);
       }
     }
+    // fireball trail embers: drift up, shrink and fade fast
+    for (let i = this.embers.length - 1; i >= 0; i--) {
+      const e = this.embers[i];
+      e.t += dt;
+      const k = e.t / e.life;
+      e.m.position.y += e.vy * dt;
+      e.m.material.opacity = 0.9 * (1 - k);
+      e.m.scale.setScalar(Math.max(0.05, 1 - k));
+      if (e.t > e.life) {
+        this.scene.remove(e.m);
+        this.embers.splice(i, 1);
+      }
+    }
   }
 
   clearDecals() {
@@ -133,6 +164,8 @@ export class Effects {
     this.bursts = [];
     for (const s of this.splashes) this.scene.remove(s.m);
     this.splashes = [];
+    for (const e of this.embers) this.scene.remove(e.m);
+    this.embers = [];
   }
 }
 
@@ -234,6 +267,49 @@ export function buildSuperAura() {
     }
     const bo = 0.6 + 0.4 * intensity;
     for (const b of bolts) b.material.opacity = bo * (0.6 + 0.4 * Math.random());
+  }
+
+  group.visible = false;
+  return { group, update };
+}
+
+// The TURD FIRE aura: a ring of flickering flame licks and a red-hot energy
+// shell engulfing the bird. Parent to the bird; call update(dt, intensity).
+export function buildFireAura() {
+  const group = new THREE.Group();
+
+  const shell = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(3.5, 1),
+    new THREE.MeshBasicMaterial({ color: 0xff3b00, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }),
+  );
+  group.add(shell);
+
+  const cols = [0xff2b00, 0xff6a00, 0xffb02e];
+  const flames = [];
+  for (let i = 0; i < 11; i++) {
+    const a = (i / 11) * Math.PI * 2;
+    const fl = new THREE.Mesh(
+      new THREE.ConeGeometry(0.55, 2.6, 6, 1, true),
+      new THREE.MeshBasicMaterial({ color: cols[i % cols.length], transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, depthWrite: false }),
+    );
+    const r = 1.3 + Math.random() * 0.9;
+    fl.position.set(Math.cos(a) * r, 1.1 + Math.random() * 0.9, Math.sin(a) * r);
+    group.add(fl);
+    flames.push(fl);
+  }
+
+  let t = 0;
+  function update(dt, intensity = 1) {
+    t += dt;
+    const pulse = 0.5 + 0.5 * Math.sin(t * 26);
+    shell.material.opacity = (0.14 + 0.2 * intensity) * (0.5 + 0.5 * pulse);
+    shell.scale.setScalar(1 + 0.05 * pulse);
+    for (let i = 0; i < flames.length; i++) {
+      const fl = flames[i];
+      fl.scale.y = 0.6 + 0.6 * Math.abs(Math.sin(t * 18 + i));
+      fl.material.opacity = (0.45 + 0.4 * intensity) * (0.55 + 0.45 * Math.sin(t * 22 + i * 1.7));
+    }
+    group.rotation.y += dt * 1.6;
   }
 
   group.visible = false;

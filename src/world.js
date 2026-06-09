@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import {
   buildPerson, buildKid, buildBiker, buildPicnic, buildCar,
-  buildUmbrella, buildPalm, buildSuperTurd, mat,
+  buildUmbrella, buildPalm, buildCypress, buildPine, buildRock,
+  buildSuperTurd, mat,
 } from './models.js';
 
 export const WORLD_RADIUS = 130;     // playable radius (ground disc)
@@ -109,23 +110,50 @@ export function buildWorld(scene, renderer) {
   }
   scene.add(dashes);
 
-  // Decorations: palms + umbrellas scattered down BOTH shoulders of the lane.
-  // They recycle from back to front so the scenery streams by forever.
+  // Decorations down BOTH shoulders of the lane — a Croatian-coast mix of
+  // umbrella pines, slender cypresses and palms (with a few beach umbrellas),
+  // recycling back-to-front so the scenery streams by forever. On the sea side
+  // (-X) we keep the trees landward of the shoreline.
   const decor = [];
   const decorGroup = new THREE.Group();
+  const buildFlora = () => {
+    const r = Math.random();
+    if (r < 0.4) return buildPine();
+    if (r < 0.72) return buildCypress();
+    if (r < 0.9) return buildPalm();
+    return buildUmbrella();
+  };
   const placeDecor = (item, z) => {
     const side = Math.random() < 0.5 ? -1 : 1;
-    const off = COURSE_HALF + 6 + Math.random() * (WORLD_RADIUS - COURSE_HALF - 20);
+    // sea side stays between the lane edge and the shore (~x -80); land side runs out wide
+    const maxOff = side < 0 ? 60 : WORLD_RADIUS - COURSE_HALF - 20;
+    const off = COURSE_HALF + 6 + Math.random() * maxOff;
     item.position.set(side * off, 0, z);
     item.rotation.y = Math.random() * Math.PI * 2;
   };
-  for (let i = 0; i < 34; i++) {
-    const item = Math.random() < 0.5 ? buildPalm() : buildUmbrella();
-    placeDecor(item, (i / 34) * (SPAWN_AHEAD + 60) - SPAWN_AHEAD);
+  for (let i = 0; i < 36; i++) {
+    const item = buildFlora();
+    placeDecor(item, (i / 36) * (SPAWN_AHEAD + 60) - SPAWN_AHEAD);
     decorGroup.add(item);
     decor.push(item);
   }
   scene.add(decorGroup);
+
+  // Seaside rocks strung along the shoreline (just sea-ward of the path), also
+  // recycling so the rocky coast never ends.
+  const rocks = [];
+  const rocksGroup = new THREE.Group();
+  const placeRock = (item, z) => {
+    item.position.set(-(70 + Math.random() * 22), 0, z); // along the shore band
+    item.rotation.y = Math.random() * Math.PI * 2;
+  };
+  for (let i = 0; i < 16; i++) {
+    const item = buildRock();
+    placeRock(item, (i / 16) * (SPAWN_AHEAD + 60) - SPAWN_AHEAD);
+    rocksGroup.add(item);
+    rocks.push(item);
+  }
+  scene.add(rocksGroup);
 
   return {
     // Keep the world centred on the bird as it runs down the straightaway.
@@ -142,6 +170,11 @@ export function buildWorld(scene, renderer) {
       for (const item of decor) {
         if (item.position.z > bz + RECYCLE_BEHIND + 20) {
           placeDecor(item, bz - SPAWN_AHEAD - Math.random() * 60);
+        }
+      }
+      for (const item of rocks) {
+        if (item.position.z > bz + RECYCLE_BEHIND + 20) {
+          placeRock(item, bz - SPAWN_AHEAD - Math.random() * 60);
         }
       }
     },

@@ -65,10 +65,18 @@ drops as targets stream toward you.
   powers up — super-Saiyan camera spin, crackling lightning, and an elated
   squawk — then drops **giant 2.5× turds for 15 seconds**. The huge turds splat
   over a much wider area, so they're far easier to land.
+- **SUPER TURD MODE stacks.** Bomb another super turd while it's active and your
+  turds grow *even bigger*, the timer extends, and a points multiplier climbs:
+  **1.5× → 2× → 2.5×** and up. Stack **three** in a row and the bird bursts into
+  **🔥 TURD FIRE**, raining down streaking lava-comet fireballs.
 
 Targets: beachgoers, kids, picnics, cyclists, and cars (cyclists and cars sweep
 across the lane like crossing traffic, so you'll need to lead them). They're all
 sized up nice and big, so they're forgiving to hit.
+
+The lane runs down a sun-drenched **Croatian coastline** — slender cypresses,
+umbrella pines and palms stream past on the shoulders, with rocks lining the
+shore.
 
 ## Tech notes
 
