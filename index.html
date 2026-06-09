@@ -62,6 +62,9 @@
     <!-- Blinking "TURD CAM" callout shown during bullet-time -->
     <div id="turdCam" class="hidden"><span class="dot"></span>TURD CAM</div>
 
+    <!-- Golden "SUPER TURD" countdown badge, shown while super mode is active -->
+    <div id="superBadge" class="hidden"><span class="bolt">⚡</span>SUPER TURD <span id="superTime">15</span>s</div>
+
     <!-- Poop / bomb button -->
     <button id="poopBtn" aria-label="Poop">
       <svg class="charge-ring" viewBox="0 0 120 120">
@@ -79,11 +82,12 @@
       <h1 class="title">BURDS</h1>
       <p class="subtitle">a game about bird turds</p>
       <div class="how-to">
-        <div class="howrow"><span class="howicon">👆</span><span>Drag anywhere to <b>fly &amp; steer</b></span></div>
-        <div class="howrow"><span class="howicon">🧭</span><span><b>Let go</b> and the bird <b>auto-aims</b> at the nearest target</span></div>
-        <div class="howrow"><span class="howicon">💩</span><span><b>Hold</b> the button to charge — <b>release</b> to bomb</span></div>
-        <div class="howrow"><span class="howicon">🎯</span><span>Splat the targets. Bullseyes = big points</span></div>
-        <div class="howrow"><span class="howicon">🐢</span><span>Get close for slow-mo <b>bullet time</b></span></div>
+        <div class="howrow"><span class="howicon">👆</span><span>Drag left/right to <b>strafe</b> down the lane (up/down to dive)</span></div>
+        <div class="howrow"><span class="howicon">🎯</span><span>Line up under a target — the <b>reticle hones</b> from big to tight</span></div>
+        <div class="howrow"><span class="howicon">💩</span><span><b>Release</b> when it's tight to splat. Hold longer = <b>bigger turd</b></span></div>
+        <div class="howrow"><span class="howicon">⭐</span><span>Dead-center = <b>bullseye</b>, big points</span></div>
+        <div class="howrow"><span class="howicon">⚡</span><span>Bomb the gold <b>SUPER TURD</b> for 15s of giant turds</span></div>
+        <div class="howrow"><span class="howicon">🐢</span><span>Close hits trigger slow-mo <b>bullet time</b></span></div>
       </div>
       <button id="playBtn" class="big-btn">PLAY</button>
       <p class="best-line">Best: <span id="menuBest">0</span></p>

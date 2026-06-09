@@ -300,6 +300,50 @@ export function buildPalm() {
   return g;
 }
 
+// ---------------------------------------------------------------------------
+// THE SUPER TURD: a rare, golden, glowing pickup. Bombing it triggers SUPER
+// TURD MODE. Built to read as obviously special — gold poop swirl on a glowing
+// pad, a spinning halo and floating sparkles.
+// ---------------------------------------------------------------------------
+export function buildSuperTurd() {
+  const g = new THREE.Group();
+  const gold1 = 0xffc107, gold2 = 0xffb300, gold3 = 0xffe082;
+
+  // glowing ground pad
+  const pad = new THREE.Mesh(
+    new THREE.CircleGeometry(2.2, 24),
+    new THREE.MeshBasicMaterial({ color: 0xffe24a, transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false }),
+  );
+  pad.rotation.x = -Math.PI / 2; pad.position.y = 0.06;
+  g.add(pad);
+
+  // golden poop swirl (a fancier, bigger buildPoop)
+  const s1 = sphere(0.62, gold1, 8); s1.position.y = 0.55; s1.scale.set(1.25, 0.7, 1.25); g.add(s1);
+  const s2 = sphere(0.48, gold2, 8); s2.position.y = 1.0; s2.scale.set(1, 0.75, 1); g.add(s2);
+  const s3 = sphere(0.32, gold3, 8); s3.position.y = 1.4; g.add(s3);
+  const tip = cone(0.2, 0.55, gold2, 7); tip.position.y = 1.85; g.add(tip);
+
+  // spinning halo
+  const halo = new THREE.Mesh(
+    new THREE.TorusGeometry(1.35, 0.09, 8, 22),
+    new THREE.MeshBasicMaterial({ color: 0xfff3b0, transparent: true, opacity: 0.9, depthWrite: false }),
+  );
+  halo.rotation.x = Math.PI / 2; halo.position.y = 1.05;
+  g.add(halo);
+
+  // floating sparkles
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2;
+    const spark = new THREE.Mesh(new THREE.OctahedronGeometry(0.16), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+    spark.position.set(Math.cos(a) * 1.6, 0.9 + Math.sin(a * 2) * 0.4, Math.sin(a) * 1.6);
+    g.add(spark);
+  }
+
+  g.userData.headHeight = 2.4;
+  g.userData.halo = halo;
+  return g;
+}
+
 // A poop projectile mesh.
 export function buildPoop() {
   const g = new THREE.Group();

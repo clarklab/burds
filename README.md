@@ -42,22 +42,33 @@ proper installable PWA:
 
 ## How to play
 
-- **Drag anywhere** on the screen to fly and steer (a virtual joystick). Drag
-  up to climb, down to dive, left/right to bank.
-- **Let go** and an auto-pilot banks the bird onto the nearest target *ahead*
-  of you — lining up the drop direction so you only have to charge for range.
-  Grab the stick again any time to take back full control.
-- **Hold the 💩 button** to charge power, then **release** to drop. A quick tap
-  drops almost straight down; a full charge flings it far ahead.
-- A **reticle** on the ground shows exactly where your poop will land — it turns
-  green when you're lined up on a target.
+It's an **infinite runner**: the seagull always flies forward down a long,
+straight beach lane (think Temple Run). You can't turn around — you line up the
+drops as targets stream toward you.
+
+- **Drag left/right** to strafe across the lane; **drag up/down** to climb or
+  dive (altitude changes how far ahead the drop lands).
+- The **throw is fixed** — the poop always lands the same distance ahead. Aiming
+  is about strafing under an oncoming target and releasing on the beat.
+- A **reticle** on the ground shows where the poop will land. It starts **3×
+  oversized** and **hones down to the firing size** as a target lines up under
+  it — when it's tight, the target will be hit, so that's your cue to **release**.
+- **Hold the 💩 button longer** for a **bigger turd** (and a bigger splat). Hold
+  time only changes the turd's size now, never the range.
+- Every drop leaves a flat splat on the ground; a **direct hit** adds an extra
+  **splash** burst.
 - Land near a target and the game drops into **bullet time**, swinging the
   camera around to show precisely where you splat.
 - Dead-center hits are **BULLSEYES** (3×). Chain hits without missing to build a
   **combo multiplier**. You've got 30 seconds — rack up the score.
+- Keep an eye out for the rare golden **SUPER TURD**. Bomb it and the seagull
+  powers up — super-Saiyan camera spin, crackling lightning, and an elated
+  squawk — then drops **giant 2.5× turds for 15 seconds**. The huge turds splat
+  over a much wider area, so they're far easier to land.
 
-Targets: beachgoers, kids, picnics, cyclists, and cars (cyclists and cars move,
-so you'll need to lead them).
+Targets: beachgoers, kids, picnics, cyclists, and cars (cyclists and cars sweep
+across the lane like crossing traffic, so you'll need to lead them). They're all
+sized up nice and big, so they're forgiving to hit.
 
 ## Tech notes
 

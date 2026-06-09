@@ -217,6 +217,35 @@ html, body {
 }
 @keyframes turdCamBlink { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
 
+/* SUPER TURD MODE countdown badge */
+#superBadge {
+  position: absolute;
+  top: calc(108px + var(--safe-t));
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(46,26,0,.6);
+  color: #ffdf3f;
+  font-size: 15px;
+  font-weight: 900;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  padding: 6px 16px;
+  border-radius: 20px;
+  border: 2px solid rgba(255,210,63,.9);
+  box-shadow: 0 0 22px rgba(255,210,63,.6);
+  text-shadow: 0 0 10px rgba(255,210,63,.8);
+  pointer-events: none;
+  animation: superGlow .5s ease-in-out infinite;
+}
+#superBadge .bolt { filter: drop-shadow(0 0 5px #fff); }
+@keyframes superGlow {
+  0%,100% { box-shadow: 0 0 16px rgba(255,210,63,.45); }
+  50% { box-shadow: 0 0 32px rgba(255,210,63,.95); }
+}
+
 /* Poop button */
 #poopBtn {
   position: absolute;
@@ -243,6 +272,11 @@ html, body {
   animation: readyPulse .42s ease-in-out infinite;
 }
 @keyframes readyPulse { 0%,100% { transform: scale(1.07); } 50% { transform: scale(1.17); } }
+/* SUPER TURD MODE — the button glows molten gold while giant turds are armed */
+#poopBtn.super {
+  background: radial-gradient(circle at 38% 32%, #fffbe6, #ffe24a 50%, #ffae00);
+  box-shadow: 0 6px 0 #b8860b, 0 0 0 4px rgba(255,210,63,.6), 0 0 30px rgba(255,210,63,.9);
+}
 #poopBtn.disabled { filter: grayscale(.7) brightness(.9); opacity: .55; }
 #poopBtn:active { transform: scale(.96); }
 

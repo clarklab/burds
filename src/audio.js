@@ -104,4 +104,28 @@ export class Audio {
     this._tone(990, 0.05, 'triangle', 0.32);
     setTimeout(() => this._tone(1480, 0.09, 'triangle', 0.32), 55);
   }
+
+  // A loud, triumphant seagull "elation" yell for SUPER TURD MODE: a rising
+  // whoop, a flurry of descending gull squawks (the classic gull laugh), then a
+  // long victorious cry.
+  seagullYell() {
+    if (!this.enabled || !this.ctx) return;
+    this._tone(420, 0.2, 'sawtooth', 0.55, 1100);          // rising whoop
+    const notes = [1400, 1240, 1080, 940, 820, 720, 640];  // descending laugh
+    notes.forEach((f, i) => setTimeout(() => {
+      this._tone(f, 0.09, 'sawtooth', 0.5, f * 0.78);
+      this._noise(0.04, 0.2, 2600);
+    }, 180 + i * 95));
+    setTimeout(() => {                                       // long final cry
+      this._tone(900, 0.55, 'square', 0.55, 1350);
+      this._tone(1350, 0.5, 'sawtooth', 0.35, 1500);
+    }, 180 + notes.length * 95 + 40);
+  }
+
+  // Electric crackle/sweep under the transformation.
+  superZap() {
+    if (!this.enabled || !this.ctx) return;
+    this._tone(160, 0.55, 'sawtooth', 0.4, 1500);
+    this._noise(0.55, 0.32, 3200);
+  }
 }
