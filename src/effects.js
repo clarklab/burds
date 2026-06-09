@@ -9,15 +9,17 @@ export class Effects {
     this.scene = scene;
     this.bursts = [];
     this.decals = [];
+    this.splashes = [];
   }
 
-  // A juicy splat of brown blobs at a point.
-  splat(pos, big = false) {
+  // A juicy splat of brown blobs at a point, plus the lingering flat ground
+  // decal. `scale` tracks the size of the turd that made it.
+  splat(pos, big = false, scale = 1) {
     const group = new THREE.Group();
     const n = big ? 16 : 10;
     const parts = [];
     for (let i = 0; i < n; i++) {
-      const r = 0.12 + Math.random() * 0.22;
+      const r = (0.12 + Math.random() * 0.22) * scale;
       const m = new THREE.Mesh(new THREE.SphereGeometry(r, 5, 5), mat(i % 3 === 0 ? 0x6b4626 : 0x7a5230));
       const ang = Math.random() * Math.PI * 2;
       const sp = 4 + Math.random() * 8;
@@ -33,7 +35,7 @@ export class Effects {
 
     // flat decal on the ground
     const decal = new THREE.Mesh(
-      new THREE.CircleGeometry(big ? 1.4 : 0.9, 12),
+      new THREE.CircleGeometry((big ? 1.4 : 0.9) * scale, 12),
       new THREE.MeshLambertMaterial({ color: 0x6b4626, transparent: true, opacity: 0.85, polygonOffset: true, polygonOffsetFactor: -2 }),
     );
     decal.rotation.x = -Math.PI / 2;
@@ -46,6 +48,42 @@ export class Effects {
       const old = this.decals.shift();
       this.scene.remove(old.m);
     }
+  }
+
+  // An extra burst that fires only when a *target* gets hit: an expanding shock
+  // ring at the point of impact plus a spray of droplets kicked up and out. This
+  // rides on top of the flat splat for a satisfying "direct hit" pop.
+  splash(pos, scale = 1) {
+    // expanding shock ring (its own material so opacity fades per-splash)
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.35, 0.75, 22),
+      new THREE.MeshBasicMaterial({ color: 0x9c6b3f, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false }),
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(pos.x, (pos.y || 0) + 0.15, pos.z);
+    ring.scale.setScalar(0.4 * scale);
+    this.scene.add(ring);
+    this.splashes.push({ m: ring, t: 0, life: 0.55, base: scale });
+
+    // droplets kicked upward and outward — splashier (faster, lighter) than the
+    // splat blobs, and reusing the gravity-driven burst path.
+    const group = new THREE.Group();
+    const parts = [];
+    const n = Math.round(12 * scale);
+    for (let i = 0; i < n; i++) {
+      const r = (0.08 + Math.random() * 0.14) * scale;
+      const m = new THREE.Mesh(new THREE.SphereGeometry(r, 5, 5), mat(i % 2 === 0 ? 0x7a5230 : 0x9c6b3f));
+      m.position.copy(pos);
+      group.add(m);
+      const ang = Math.random() * Math.PI * 2;
+      const sp = 5 + Math.random() * 9;
+      parts.push({
+        m,
+        v: new THREE.Vector3(Math.cos(ang) * sp, 7 + Math.random() * 8, Math.sin(ang) * sp),
+      });
+    }
+    this.scene.add(group);
+    this.bursts.push({ group, parts, t: 0, life: 0.9 });
   }
 
   update(dt) {
@@ -74,6 +112,18 @@ export class Effects {
         if (k >= 1) d.grow = false;
       }
     }
+    // splash shock-rings: grow outward and fade
+    for (let i = this.splashes.length - 1; i >= 0; i--) {
+      const sp = this.splashes[i];
+      sp.t += dt;
+      const k = sp.t / sp.life;
+      sp.m.scale.setScalar((0.4 + k * 2.4) * sp.base);
+      sp.m.material.opacity = 0.85 * (1 - k);
+      if (sp.t > sp.life) {
+        this.scene.remove(sp.m);
+        this.splashes.splice(i, 1);
+      }
+    }
   }
 
   clearDecals() {
@@ -81,6 +131,8 @@ export class Effects {
     this.decals = [];
     for (const b of this.bursts) this.scene.remove(b.group);
     this.bursts = [];
+    for (const s of this.splashes) this.scene.remove(s.m);
+    this.splashes = [];
   }
 }
 

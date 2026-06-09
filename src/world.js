@@ -4,50 +4,37 @@ import {
   buildUmbrella, buildPalm, mat,
 } from './models.js';
 
-export const WORLD_RADIUS = 130;     // playable radius
+export const WORLD_RADIUS = 130;     // playable radius (ground disc)
 
 // ---------------------------------------------------------------------------
-// The "circuit": targets live evenly spaced around one smooth elliptical ring
-// centred on the beach, rather than scattered at random. This is the whole
-// trick to a pure loop-and-swoop feel — every target the bird's auto-aim
-// commits to is the *next gentle step* around the oval, so the flight path is a
-// flowing orbit with no hairpins or back-and-forth zig-zags. The oval is wide
-// and shallow to match the beach, and its gentlest curvature still sits well
-// inside the bird's turn radius, so it can always trace it smoothly.
+// The course is now a long, straight "infinite runner" lane (à la Temple Run).
+// The bird always flies forward down -Z; the player strafes left/right inside a
+// fixed-width corridor and dives/climbs, but never turns around. Targets stream
+// toward the bird from far ahead and recycle behind it, and the scenery scrolls
+// with the bird so the beach never visibly ends.
 // ---------------------------------------------------------------------------
-export const RING_CENTER = new THREE.Vector3(0, 0, 40);
-// A true circle (RX == RZ). With only a few targets this matters: on a circle the
-// target *across* the ring (distance 2R) sits far beyond the *adjacent* one
-// (distance R·√2), so the auto-aim's commit-distance cap can cleanly prefer the
-// neighbour and the bird circulates instead of darting across the middle.
-const RING_RX = 40;
-const RING_RZ = 40;
-const ORBIT_SPEED = 3;       // m/s drift for moving targets: gentle, so even spacing holds
-const ORBIT_DIR = 1;         // every mover circulates the ring the same way
-const ORBIT_OMEGA = ORBIT_SPEED / ((RING_RX + RING_RZ) / 2);
+export const COURSE_HALF = 16;       // lateral half-width of the playable lane
+const SPAWN_AHEAD = 150;             // distance ahead (-Z) the frontmost target sits
+const SPAWN_GAP = 30;                // z-spacing between targets in the stream
+const RECYCLE_BEHIND = 24;           // recycle a target once it's this far behind (+Z)
 
-// World-space point on the ring at a given angle.
-function ringPos(angle) {
-  return new THREE.Vector3(
-    RING_CENTER.x + Math.cos(angle) * RING_RX,
-    0,
-    RING_CENTER.z + Math.sin(angle) * RING_RZ,
-  );
-}
-// Heading (rotation.y) facing along the ring's tangent at `angle`, so movers
-// point the way they travel. forward = (sin y, cos y) ⇒ y = atan2(vx, vz).
-function ringHeading(angle, dir) {
-  const vx = -Math.sin(angle) * RING_RX * dir;
-  const vz = Math.cos(angle) * RING_RZ * dir;
-  return Math.atan2(vx, vz);
-}
+// Targets are scaled up (and given a bigger catch radius) so they're easier to
+// nail — see the request to make everything ~1.5x larger to hit.
+const TARGET_SCALE = 1.5;
+
+// Moving targets (cars / cyclists) gently sweep across the lane like crossing
+// traffic. Kept slow so the lead you need to give them stays fair.
+const DRIFT_AMP = 11;                // how far across the lane they sweep
+const DRIFT_OMEGA = 0.5;             // sweep speed (rad/s)
 
 // ---------------------------------------------------------------------------
-// Build the static beach world: sky, sun, sand, sea, boardwalk, palms, etc.
+// Build the static beach world: sky, sun, sand, sea, courseway, palms, etc.
+// Returns a scroller whose `update(birdPos)` keeps the scenery centred on the
+// bird so the straightaway reads as endless.
 // ---------------------------------------------------------------------------
 export function buildWorld(scene, renderer) {
   scene.background = new THREE.Color(0x8fd6ee);
-  scene.fog = new THREE.Fog(0xbfe6ee, 240, 620);
+  scene.fog = new THREE.Fog(0xbfe6ee, 200, 560);
 
   // Lights
   const hemi = new THREE.HemisphereLight(0xcdeffc, 0xe8d9a8, 0.95);
@@ -63,7 +50,7 @@ export function buildWorld(scene, renderer) {
   sun.shadow.bias = -0.0004;
   scene.add(sun);
 
-  // Sky dome (gradient)
+  // Sky dome (gradient) — follows the bird so its edge is never reached.
   const skyGeo = new THREE.SphereGeometry(500, 24, 16);
   const skyMat = new THREE.ShaderMaterial({
     side: THREE.BackSide,
@@ -75,14 +62,17 @@ export function buildWorld(scene, renderer) {
     fragmentShader: `varying vec3 vp; uniform vec3 top; uniform vec3 bottom;
       void main(){ float h = clamp((normalize(vp).y*0.5+0.5),0.0,1.0); gl_FragColor = vec4(mix(bottom, top, pow(h,0.8)),1.0);} `,
   });
-  scene.add(new THREE.Mesh(skyGeo, skyMat));
+  const sky = new THREE.Mesh(skyGeo, skyMat);
+  scene.add(sky);
 
-  // The sun billboard
+  // The sun billboard (kept at a fixed offset from the bird).
   const sunDisc = new THREE.Mesh(new THREE.CircleGeometry(28, 24), new THREE.MeshBasicMaterial({ color: 0xfff7cf }));
-  sunDisc.position.set(150, 180, -260);
+  const sunOffset = new THREE.Vector3(150, 180, -260);
+  sunDisc.position.copy(sunOffset);
   scene.add(sunDisc);
 
-  // Ground: big sand disc
+  // Ground: big sand disc that re-centres on the bird (a circle looks identical
+  // from any centre, so the slide is seamless).
   const sand = new THREE.Mesh(
     new THREE.CircleGeometry(WORLD_RADIUS + 40, 48),
     mat(0xf2d79b),
@@ -91,47 +81,71 @@ export function buildWorld(scene, renderer) {
   sand.receiveShadow = true;
   scene.add(sand);
 
-  // Sea: a big plane on the far side (negative Z)
-  const sea = new THREE.Mesh(new THREE.PlaneGeometry(900, 500), mat(0x2aa3d6, { transparent: true, opacity: 0.92 }));
+  // Sea: a long plane running along the lane on the far left side.
+  const sea = new THREE.Mesh(new THREE.PlaneGeometry(260, 1200), mat(0x2aa3d6, { transparent: true, opacity: 0.92 }));
   sea.rotation.x = -Math.PI / 2;
-  sea.position.set(0, 0.05, -260);
+  sea.position.set(-200, 0.05, 0);
   scene.add(sea);
-
-  // Wet shoreline band
-  const shore = new THREE.Mesh(new THREE.PlaneGeometry(900, 60), mat(0x7fd0e0, { transparent: true, opacity: 0.6 }));
+  // Wet shoreline band between the sea and the sand.
+  const shore = new THREE.Mesh(new THREE.PlaneGeometry(60, 1200), mat(0x7fd0e0, { transparent: true, opacity: 0.6 }));
   shore.rotation.x = -Math.PI / 2;
-  shore.position.set(0, 0.06, -28);
+  shore.position.set(-92, 0.06, 0);
   scene.add(shore);
 
-  // Boardwalk / road strip across the sand (where cars + bikers go)
-  const road = new THREE.Mesh(new THREE.PlaneGeometry(WORLD_RADIUS * 2 + 80, 16), mat(0x6d6f78));
+  // Courseway: a boardwalk strip running ALONG the lane (down -Z), with dashes
+  // marching down the middle. Snapping its z to the dash pitch keeps the dashes
+  // from visibly sliding as it scrolls with the bird.
+  const DASH_PITCH = 12;
+  const road = new THREE.Mesh(new THREE.PlaneGeometry(COURSE_HALF * 2 + 6, 1200), mat(0x6d6f78));
   road.rotation.x = -Math.PI / 2;
-  road.position.set(0, 0.08, 70);
+  road.position.set(0, 0.08, 0);
   scene.add(road);
-  // road dashes
-  for (let x = -WORLD_RADIUS; x < WORLD_RADIUS; x += 12) {
-    const dash = new THREE.Mesh(new THREE.PlaneGeometry(5, 0.7), mat(0xffe066));
+  const dashes = new THREE.Group();
+  for (let i = -50; i < 50; i++) {
+    const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 5), mat(0xffe066));
     dash.rotation.x = -Math.PI / 2;
-    dash.position.set(x, 0.1, 70);
-    scene.add(dash);
+    dash.position.set(0, 0.1, i * DASH_PITCH);
+    dashes.add(dash);
   }
+  scene.add(dashes);
 
-  // Decorations: palms, umbrellas (no targets)
-  const decor = new THREE.Group();
-  for (let i = 0; i < 26; i++) {
-    const ang = Math.random() * Math.PI * 2;
-    const rad = 40 + Math.random() * (WORLD_RADIUS - 30);
-    const x = Math.cos(ang) * rad;
-    const z = Math.sin(ang) * rad * 0.7 + 20;
-    if (z < -10) continue; // keep palms out of the sea
-    const item = Math.random() < 0.5 ? buildPalm() : buildUmbrella();
-    item.position.set(x, 0, z);
+  // Decorations: palms + umbrellas scattered down BOTH shoulders of the lane.
+  // They recycle from back to front so the scenery streams by forever.
+  const decor = [];
+  const decorGroup = new THREE.Group();
+  const placeDecor = (item, z) => {
+    const side = Math.random() < 0.5 ? -1 : 1;
+    const off = COURSE_HALF + 6 + Math.random() * (WORLD_RADIUS - COURSE_HALF - 20);
+    item.position.set(side * off, 0, z);
     item.rotation.y = Math.random() * Math.PI * 2;
-    decor.add(item);
+  };
+  for (let i = 0; i < 34; i++) {
+    const item = Math.random() < 0.5 ? buildPalm() : buildUmbrella();
+    placeDecor(item, (i / 34) * (SPAWN_AHEAD + 60) - SPAWN_AHEAD);
+    decorGroup.add(item);
+    decor.push(item);
   }
-  scene.add(decor);
+  scene.add(decorGroup);
 
-  return { sun, sunDisc, sea };
+  return {
+    // Keep the world centred on the bird as it runs down the straightaway.
+    update(birdPos) {
+      const bx = birdPos.x, bz = birdPos.z;
+      sky.position.set(bx, 0, bz);
+      sunDisc.position.set(bx + sunOffset.x, sunOffset.y, bz + sunOffset.z);
+      sand.position.set(bx, 0, bz);
+      sea.position.z = bz;
+      shore.position.z = bz;
+      road.position.z = bz;
+      dashes.position.z = Math.round(bz / DASH_PITCH) * DASH_PITCH;
+      // recycle scenery that has fallen behind to far ahead of the bird
+      for (const item of decor) {
+        if (item.position.z > bz + RECYCLE_BEHIND + 20) {
+          placeDecor(item, bz - SPAWN_AHEAD - Math.random() * 60);
+        }
+      }
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -172,54 +186,59 @@ function buildBullseye() {
 }
 
 // ---------------------------------------------------------------------------
-// Manages a pool of live targets.
+// Manages a stream of live targets running down the lane toward the bird.
 // ---------------------------------------------------------------------------
 export class TargetManager {
   constructor(scene) {
     this.scene = scene;
     this.targets = [];
-    // Fewer, well-separated targets => longer, cleaner swoops between them.
-    this.maxTargets = 4;
+    // How many targets are in flight down the lane at once.
+    this.maxTargets = 6;
+    this._frontZ = -SPAWN_AHEAD; // z of the furthest-ahead target spawned so far
   }
 
-  reset() {
+  reset(birdPos) {
     for (const t of this.targets) this.scene.remove(t.group);
     this.targets = [];
-    // One target per evenly-spaced slot around the ring.
-    for (let i = 0; i < this.maxTargets; i++) this.spawn(null, i);
+    const baseZ = birdPos ? birdPos.z : 0;
+    this._frontZ = baseZ - SPAWN_AHEAD + SPAWN_GAP; // first _advanceFront lands at -SPAWN_AHEAD
+    for (let i = 0; i < this.maxTargets; i++) this.spawn(null, this._advanceFront());
   }
 
-  // Spawn a target into ring `slot`. Each slot owns a fixed angle around the
-  // oval, and respawns reuse the same slot, so the even spacing of the circuit
-  // is preserved for the whole round no matter what gets bombed.
-  spawn(typeKey, slot = 0) {
+  // March the spawn cursor one gap further ahead and return the new z.
+  _advanceFront() {
+    this._frontZ -= SPAWN_GAP;
+    return this._frontZ;
+  }
+
+  // Spawn a target at lane position z (random x within the corridor).
+  spawn(typeKey, z) {
     const key = typeKey || TYPE_KEYS[(Math.random() * TYPE_KEYS.length) | 0];
     const cfg = TYPES[key];
     const group = cfg.build();
 
     const orbit = !!cfg.moving;
-    const angle = (slot / this.maxTargets) * Math.PI * 2;
-    group.position.copy(ringPos(angle));
-    if (orbit) {
-      // movers face (and drift) along the ring tangent
-      group.rotation.y = ringHeading(angle, ORBIT_DIR);
-    } else {
-      // statics face inward toward the centre of the circuit — tidy + deterministic
-      group.rotation.y = angle + Math.PI / 2;
-    }
+    const x = (Math.random() * 2 - 1) * COURSE_HALF;
+    group.position.set(x, 0, z);
+    // statics face up the lane toward the oncoming bird; movers face the way
+    // they sweep across it (crossing traffic).
+    group.rotation.y = orbit ? Math.PI / 2 : 0;
+    group.scale.setScalar(TARGET_SCALE);
 
+    const localTop = group.userData.headHeight || 2;
     const bullseye = buildBullseye();
-    const topH = group.userData.headHeight || 2;
-    bullseye.position.y = topH + 1.4;
+    bullseye.position.y = localTop + 1.4; // local space (group is scaled)
     group.add(bullseye);
 
     this.scene.add(group);
 
     const t = {
       key, group, bullseye,
-      cfg, value: cfg.value, radius: cfg.radius,
-      hitY: topH,
-      slot, orbit, angle,
+      cfg, value: cfg.value, radius: cfg.radius * TARGET_SCALE,
+      hitY: localTop * TARGET_SCALE,   // world-space top, for collision
+      bullLocalY: localTop + 1.4,      // local-space bob base for the bullseye
+      orbit, baseX: x,
+      driftPhase: Math.random() * Math.PI * 2,
       bobT: Math.random() * 10,
       alive: true,
       dying: 0,
@@ -228,7 +247,8 @@ export class TargetManager {
     return t;
   }
 
-  update(dt, t) {
+  update(dt, t, birdPos) {
+    const bz = birdPos ? birdPos.z : 0;
     for (let i = this.targets.length - 1; i >= 0; i--) {
       const tg = this.targets[i];
 
@@ -236,32 +256,37 @@ export class TargetManager {
       if (!tg.alive) {
         tg.dying += dt;
         const k = tg.dying / 0.6;
-        tg.group.scale.setScalar(Math.max(0.001, 1 - k));
+        tg.group.scale.setScalar(Math.max(0.001, TARGET_SCALE * (1 - k)));
         tg.group.position.y = k * 1.5;
         tg.group.rotation.z += dt * 6;
         if (tg.dying > 0.6) {
           this.scene.remove(tg.group);
           this.targets.splice(i, 1);
-          this.spawn(null, tg.slot); // refill the same ring slot to keep spacing even
+          this.spawn(null, this._advanceFront()); // refill the stream up ahead
         }
         continue;
       }
 
-      // bobbing bullseye
+      // recycle a target that the bird has flown well past
+      if (tg.group.position.z > bz + RECYCLE_BEHIND) {
+        this.scene.remove(tg.group);
+        this.targets.splice(i, 1);
+        this.spawn(null, this._advanceFront());
+        continue;
+      }
+
+      // bobbing bullseye (local space; group scale carries it to world size)
       tg.bobT += dt;
-      tg.bullseye.position.y = tg.hitY + 1.4 + Math.sin(tg.bobT * 2) * 0.25;
+      tg.bullseye.position.y = tg.bullLocalY + Math.sin(tg.bobT * 2) * 0.25;
       tg.bullseye.rotation.y += dt * 0.8;
 
-      // movers (cars/bikers) drift slowly *along* the ring, all the same way, so
-      // the bird overtakes them on a smooth arc instead of intercepting across.
+      // movers sweep across the lane like crossing traffic
       if (tg.orbit) {
-        tg.angle += ORBIT_OMEGA * ORBIT_DIR * dt;
-        const p = ringPos(tg.angle);
-        tg.group.position.x = p.x;
-        tg.group.position.z = p.z;
-        tg.group.rotation.y = ringHeading(tg.angle, ORBIT_DIR);
+        tg.driftPhase += DRIFT_OMEGA * dt;
+        const x = tg.baseX + Math.sin(tg.driftPhase) * DRIFT_AMP;
+        tg.group.position.x = THREE.MathUtils.clamp(x, -COURSE_HALF, COURSE_HALF);
         if (tg.group.userData.wheels) {
-          for (const w of tg.group.userData.wheels) w.rotation.x -= dt * ORBIT_SPEED * 1.5;
+          for (const w of tg.group.userData.wheels) w.rotation.x -= dt * 3;
         }
       }
     }
@@ -278,29 +303,6 @@ export class TargetManager {
       if (d < bd) { bd = d; best = tg; }
     }
     return best ? { target: best, dist: bd } : null;
-  }
-
-  // The next live target going *around* the ring, in circulation direction
-  // `loopDir` (+1 / -1), from the bird's current angular position about the ring
-  // centre. Committing to "the next one around" — rather than the nearest, which
-  // can sit straight across the middle — is what guarantees a clean, single-
-  // direction orbit no matter how few targets are live.
-  nextAround(pos, loopDir) {
-    const TAU = Math.PI * 2;
-    const phiB = Math.atan2(pos.z - RING_CENTER.z, pos.x - RING_CENTER.x);
-    let best = null, bestDelta = Infinity, bestDist = 0;
-    for (const tg of this.targets) {
-      if (!tg.alive) continue;
-      const phiT = Math.atan2(tg.group.position.z - RING_CENTER.z, tg.group.position.x - RING_CENTER.x);
-      let delta = ((loopDir * (phiT - phiB)) % TAU + TAU) % TAU; // 0..2π ahead in loopDir
-      if (delta < 0.35) delta += TAU;        // skip the slot we're basically on
-      if (delta < bestDelta) {
-        bestDelta = delta;
-        best = tg;
-        bestDist = Math.hypot(tg.group.position.x - pos.x, tg.group.position.z - pos.z);
-      }
-    }
-    return best ? { target: best, dist: bestDist } : null;
   }
 
   kill(tg) {
