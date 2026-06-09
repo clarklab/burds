@@ -1,0 +1,13 @@
+{
+  "name": "burds",
+  "version": "1.0.0",
+  "description": "A mobile-first 3D infinite-runner game about a seagull dropping turds on the beach.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node test/smoke.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.60.0"
+  }
+}
