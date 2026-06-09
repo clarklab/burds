@@ -19,6 +19,10 @@ export class Input {
 
     this._steerTouchId = null;
     this._anchor = { x: 0, y: 0 };
+    // While the poop button is held to charge, the SAME finger can swipe to
+    // steer — we anchor at the press point and steer off horizontal/vertical drag.
+    this._btnTouchId = null;
+    this._btnAnchor = { x: 0, y: 0 };
     this._keys = {};
 
     this._bind();
@@ -27,6 +31,15 @@ export class Input {
   _bind() {
     const c = this.canvas;
 
+    // Set steering from a drag offset relative to an anchor. `maxR` is the swipe
+    // distance for full deflection (smaller = more sensitive).
+    const steerFrom = (x, y, anchor, maxR) => {
+      const dx = Math.max(-1, Math.min(1, (x - anchor.x) / maxR));
+      const dy = Math.max(-1, Math.min(1, (y - anchor.y) / maxR));
+      this.steerX = dx;
+      this.steerY = -dy; // drag up => climb
+    };
+
     const start = (id, x, y) => {
       if (this._steerTouchId !== null) return;
       this._steerTouchId = id;
@@ -34,13 +47,7 @@ export class Input {
       this._anchor.y = y;
     };
     const move = (x, y) => {
-      const maxR = Math.min(window.innerWidth, window.innerHeight) * 0.28;
-      let dx = (x - this._anchor.x) / maxR;
-      let dy = (y - this._anchor.y) / maxR;
-      dx = Math.max(-1, Math.min(1, dx));
-      dy = Math.max(-1, Math.min(1, dy));
-      this.steerX = dx;
-      this.steerY = -dy; // drag up => climb
+      steerFrom(x, y, this._anchor, Math.min(window.innerWidth, window.innerHeight) * 0.28);
     };
     const end = () => {
       this._steerTouchId = null;
@@ -73,32 +80,55 @@ export class Input {
     window.addEventListener('mousemove', (e) => { if (this._steerTouchId === 'mouse') move(e.clientX, e.clientY); });
     window.addEventListener('mouseup', () => { if (this._steerTouchId === 'mouse') end(); });
 
-    // Poop button
+    // Poop button. Holding it charges; while held, the same finger can swipe to
+    // steer (id `null` = keyboard, which never steers). We anchor at the press
+    // point and steer off the drag, using a smaller radius so a thumb pinned to
+    // the corner button can still reach full deflection.
     const pb = this.poopBtn;
-    const startCharge = (e) => {
+    const startCharge = (id, x, y, e) => {
       if (e) e.preventDefault();
       if (!this.enabled || this.charging) return;
       this.charging = true;
       this.charge = 0;
+      this._btnTouchId = id;
+      this._btnAnchor.x = x;
+      this._btnAnchor.y = y;
       pb.classList.add('charging');
+    };
+    const btnSteer = (x, y) => {
+      steerFrom(x, y, this._btnAnchor, Math.min(window.innerWidth, window.innerHeight) * 0.16);
     };
     const stopCharge = (e) => {
       if (e) e.preventDefault();
+      this._btnTouchId = null;
+      // releasing the charge finger straightens out — unless a canvas joystick
+      // touch is also active and owns the steering.
+      if (this._steerTouchId === null) { this.steerX = 0; this.steerY = 0; }
       if (!this.charging) return;
       this.charging = false;
       this.releasedPower = this.charge;
       pb.classList.remove('charging');
     };
-    pb.addEventListener('touchstart', startCharge, { passive: false });
+    pb.addEventListener('touchstart', (e) => {
+      const t = e.changedTouches[0];
+      if (t) startCharge(t.identifier, t.clientX, t.clientY, e);
+    }, { passive: false });
+    pb.addEventListener('touchmove', (e) => {
+      for (const t of e.changedTouches) {
+        if (t.identifier === this._btnTouchId) btnSteer(t.clientX, t.clientY);
+      }
+      e.preventDefault();
+    }, { passive: false });
     pb.addEventListener('touchend', stopCharge, { passive: false });
     pb.addEventListener('touchcancel', stopCharge, { passive: false });
-    pb.addEventListener('mousedown', startCharge);
-    window.addEventListener('mouseup', (e) => { if (this.charging) stopCharge(e); });
+    pb.addEventListener('mousedown', (e) => startCharge('mouse', e.clientX, e.clientY, e));
+    window.addEventListener('mousemove', (e) => { if (this._btnTouchId === 'mouse') btnSteer(e.clientX, e.clientY); });
+    window.addEventListener('mouseup', (e) => { if (this.charging || this._btnTouchId === 'mouse') stopCharge(e); });
 
     // Keyboard
     window.addEventListener('keydown', (e) => {
       this._keys[e.code] = true;
-      if (e.code === 'Space') { startCharge(); e.preventDefault(); }
+      if (e.code === 'Space') { startCharge(null, 0, 0); e.preventDefault(); }
     });
     window.addEventListener('keyup', (e) => {
       this._keys[e.code] = false;
@@ -134,11 +164,13 @@ export class Input {
     this.enabled = v;
     this.poopBtn.classList.toggle('disabled', !v);
     if (!v && this.charging) {
-      // cancel any in-progress charge
+      // cancel any in-progress charge (and its finger-steering)
       this.charging = false;
       this.charge = 0;
       this.releasedPower = null;
       this.poopBtn.classList.remove('charging');
+      this._btnTouchId = null;
+      if (this._steerTouchId === null) { this.steerX = 0; this.steerY = 0; }
     }
   }
 }

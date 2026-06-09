@@ -173,6 +173,27 @@ if (!(sup.stack3 === 3 && sup.fireMode && sup.fireAura && sup.badgeFire && sup.p
   throw new Error('TURD FIRE did not ignite at 3 stacks: ' + JSON.stringify(sup));
 }
 
+// --- charging finger can steer: hold the poop button and drag, and steerX
+//     should follow the drag (then reset on release) ---
+await page.evaluate(() => { window.game.input.steerX = 0; window.game.input.steerY = 0; });
+{
+  const btn = await page.$('#poopBtn');
+  const bb = await btn.boundingBox();
+  const cx = bb.x + bb.width / 2, cy = bb.y + bb.height / 2;
+  await page.mouse.move(cx, cy);
+  await page.mouse.down();
+  await page.mouse.move(cx + 140, cy, { steps: 6 });
+  const steerRight = await page.evaluate(() => window.game.input.steerX);
+  await page.mouse.move(cx - 140, cy, { steps: 6 });
+  const steerLeft = await page.evaluate(() => window.game.input.steerX);
+  await page.mouse.up();
+  const steerReleased = await page.evaluate(() => window.game.input.steerX);
+  console.log('STEER TEST:', JSON.stringify({ steerRight, steerLeft, steerReleased }));
+  if (!(steerRight > 0.3 && steerLeft < -0.3 && steerReleased === 0)) {
+    throw new Error('charge-finger steering failed: ' + JSON.stringify({ steerRight, steerLeft, steerReleased }));
+  }
+}
+
 // --- capture a clean bullet-time frame: frozen target, tap straight down ---
 await page.evaluate(() => {
   const g = window.game;
