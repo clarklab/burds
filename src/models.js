@@ -59,6 +59,99 @@ const SHIRTS = [0xff6b6b, 0x4ecdc4, 0xffe66d, 0x6a8eff, 0xa06bff, 0xff9f1c, 0x2e
 const pick = (a) => a[(Math.random() * a.length) | 0];
 
 // ---------------------------------------------------------------------------
+// Faces. A character's face is a single textured plane stuck on the front of
+// the head: one shared "normal" expression and a handful of "shocked" ones.
+// The textures + materials are built once and shared across every character
+// (the concert packs ~125 of them), so a face costs one extra mesh and an
+// expression swap is just `plane.material = …`. buildFace() returns
+// { setShocked } and is reusable on any boxy-headed model.
+// ---------------------------------------------------------------------------
+function drawFace(draw) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const ctx = c.getContext('2d');
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  draw(ctx);
+  const t = new THREE.CanvasTexture(c);
+  t.anisotropy = 4;
+  return t;
+}
+const ink = (ctx) => { ctx.fillStyle = '#15110f'; ctx.strokeStyle = '#15110f'; };
+const dot = (ctx, x, y, r) => { ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill(); };
+const oval = (ctx, x, y, rx, ry, color) => { ctx.fillStyle = color; ctx.beginPath(); ctx.ellipse(x, y, rx, ry, 0, 0, 7); ctx.fill(); };
+const brows = (ctx, raise) => {
+  ctx.lineWidth = 7; ink(ctx);
+  ctx.beginPath(); ctx.moveTo(30, 34 + raise); ctx.lineTo(54, 26); ctx.stroke();   // \ over left eye
+  ctx.beginPath(); ctx.moveTo(98, 34 + raise); ctx.lineTo(74, 26); ctx.stroke();   // / over right eye
+};
+// neutral: two dot eyes + a small calm mouth
+function faceNormal(ctx) {
+  ink(ctx);
+  dot(ctx, 46, 52, 6.5); dot(ctx, 82, 52, 6.5);
+  ctx.lineWidth = 6; ctx.beginPath(); ctx.moveTo(54, 84); ctx.lineTo(74, 84); ctx.stroke();
+}
+// five distinct "about to get splatted" expressions
+const SHOCKED = [
+  // 0 — round O-face
+  (ctx) => {
+    oval(ctx, 46, 50, 16, 16, '#fff'); oval(ctx, 82, 50, 16, 16, '#fff');
+    ink(ctx); dot(ctx, 46, 51, 7.5); dot(ctx, 82, 51, 7.5);
+    oval(ctx, 64, 92, 11, 15, '#3a1216');
+  },
+  // 1 — square scream, eyebrows + teeth
+  (ctx) => {
+    brows(ctx, 4);
+    oval(ctx, 46, 54, 14, 14, '#fff'); oval(ctx, 82, 54, 14, 14, '#fff');
+    ink(ctx); dot(ctx, 46, 56, 6); dot(ctx, 82, 56, 6);
+    ctx.fillStyle = '#3a1216'; ctx.fillRect(44, 78, 40, 30);
+    ctx.fillStyle = '#fff'; ctx.fillRect(44, 78, 40, 6);
+  },
+  // 2 — tall gasp
+  (ctx) => {
+    oval(ctx, 46, 50, 15, 15, '#fff'); oval(ctx, 82, 50, 15, 15, '#fff');
+    ink(ctx); dot(ctx, 46, 51, 6.5); dot(ctx, 82, 51, 6.5);
+    oval(ctx, 64, 94, 9, 18, '#3a1216');
+  },
+  // 3 — saucer eyes, tiny pupils up
+  (ctx) => {
+    oval(ctx, 46, 50, 20, 20, '#fff'); oval(ctx, 82, 50, 20, 20, '#fff');
+    ink(ctx); dot(ctx, 46, 44, 5); dot(ctx, 82, 44, 5);
+    oval(ctx, 64, 90, 8, 10, '#3a1216');
+  },
+  // 4 — wide brows + oval howl
+  (ctx) => {
+    brows(ctx, 0);
+    oval(ctx, 46, 54, 14, 14, '#fff'); oval(ctx, 82, 54, 14, 14, '#fff');
+    ink(ctx); dot(ctx, 46, 55, 6); dot(ctx, 82, 55, 6);
+    oval(ctx, 64, 92, 18, 11, '#3a1216');
+  },
+];
+
+let FACE_MATS = null;
+function faceMaterials() {
+  if (FACE_MATS) return FACE_MATS;
+  const make = (draw) => new THREE.MeshBasicMaterial({ map: drawFace(draw), transparent: true, alphaTest: 0.5, side: THREE.DoubleSide });
+  FACE_MATS = { normal: make(faceNormal), shocked: SHOCKED.map(make) };
+  return FACE_MATS;
+}
+
+// Stick a face on the front (-Z) of a head mesh. `z` is the plane's local
+// offset to sit just proud of the face; `w`/`h` size it to the head. Returns a
+// controller whose setShocked(true) swaps to a random shocked expression.
+export function buildFace(head, { w = 0.58, h = 0.58, z = -0.31 } = {}) {
+  const M = faceMaterials();
+  const variant = (Math.random() * M.shocked.length) | 0;
+  const plane = new THREE.Mesh(new THREE.PlaneGeometry(w, h), M.normal);
+  plane.position.set(0, 0.02, z);
+  plane.rotation.y = Math.PI;          // face outward (-Z), texture upright
+  plane.castShadow = false; plane.receiveShadow = false;
+  plane.matrixAutoUpdate = false; plane.updateMatrix();
+  head.add(plane);
+  return { setShocked(on) { plane.material = on ? M.shocked[variant] : M.normal; } };
+}
+
+// ---------------------------------------------------------------------------
 // THE STAR: the seagull the player controls.
 // Returns { group, flap(t), bank(angle) } so main can animate it.
 // ---------------------------------------------------------------------------
@@ -188,6 +281,7 @@ export function buildPerson({ scale = 1, shirt = pick(SHIRTS), skin = pick(SKIN)
   g.add(neck);
   const head = box(0.62, 0.62, 0.6, skin, 0, legH + 1.5, 0);
   g.add(head);
+  g.userData.setShocked = buildFace(head, { w: 0.58, h: 0.58, z: -0.31 }).setShocked;
   // hair cap
   const hair = box(0.66, 0.26, 0.64, pick([0x2a1a0a, 0x4a3120, 0x1a1a1a, 0x6b4a2a, 0xc4a35a]), 0, legH + 1.78, 0);
   g.add(hair);
@@ -231,6 +325,7 @@ export function buildBiker() {
   rider.position.set(0, 0.55, 0.1);
   rider.rotation.x = 0.45;
   g.add(rider);
+  g.userData.setShocked = rider.userData.setShocked; // expose the rider's face
 
   // helmet
   const helmet = box(0.66, 0.34, 0.62, pick(SHIRTS), 0, 2.55, -0.55);
@@ -509,7 +604,9 @@ export function buildSeatedGuest({ shirt = pick(SHIRTS), skin = pick(SKIN), pant
   g.add(box(0.54, 0.22, 0.44, pants, 0, seatY + 0.16, -0.1)); // thighs
   g.add(box(0.44, 0.5, 0.22, pants, 0, seatY - 0.15, -0.32)); // shins
   g.add(box(0.72, 0.78, 0.44, shirt, 0, seatY + 0.62, 0.04)); // torso
-  g.add(box(0.5, 0.48, 0.46, skin, 0, seatY + 1.2, 0.04));    // head
+  const head = box(0.5, 0.48, 0.46, skin, 0, seatY + 1.2, 0.04); // head
+  g.add(head);
+  g.userData.setShocked = buildFace(head, { w: 0.46, h: 0.44, z: -0.24 }).setShocked;
   g.add(box(0.54, 0.2, 0.5, pick(HAIR), 0, seatY + 1.42, 0.06)); // hair
   g.userData.headHeight = seatY + 1.52;
   return g;
