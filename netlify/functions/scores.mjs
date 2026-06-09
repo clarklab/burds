@@ -8,7 +8,7 @@
 // score submitted while briefly offline) are idempotent and never double-count.
 import { getStore } from '@netlify/blobs';
 
-const KEY = 'top';
+const KEY = 'board';   // fresh key (drops the throwaway deploy-verification entry)
 const MAX = 50;
 
 const cleanName = (s) =>
@@ -16,7 +16,10 @@ const cleanName = (s) =>
 const validScore = (n) => Number.isFinite(n) && n >= 0 && n <= 1e9;
 
 export default async (req) => {
-  const store = getStore('leaderboard');
+  // Strong consistency so a read always sees the latest write — closes the
+  // read-after-write gap and narrows the window for a concurrent read-modify-
+  // write to lose an entry.
+  const store = getStore({ name: 'leaderboard', consistency: 'strong' });
 
   if (req.method === 'GET') {
     const scores = (await store.get(KEY, { type: 'json' })) || [];
