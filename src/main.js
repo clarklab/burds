@@ -110,6 +110,10 @@ const BT_CATCH = 3.0;
 // drop when it's on target.
 const MAX_CHARGE_BT = 0.999; // charge level that counts as "max power"
 const AIM_TIME_SCALE = 0.3;  // slow-mo factor while holding a maxed turd to aim
+// On a maxed on-target drop the turd falls at FULL speed for the first stretch,
+// then bullet time snaps in only for the final approach. This is the fraction of
+// the time-to-impact the turd flies at normal speed before slow-mo kicks in.
+const BT_TRIGGER_FRAC = 0.75;
 
 class Game {
   constructor() {
@@ -698,15 +702,14 @@ class Game {
     this.poops.push(p);
     this.audio.poop();
     if (!silent) this.audio.whoosh();
-    // Carry the aim slow-mo straight into the drop when a maxed shot is on target;
-    // otherwise time snaps back to normal for the fall (no bullet time when the
-    // turd isn't close to anyone).
+    // A maxed shot on target earns the slow-mo flourish — but we hold it back.
+    // Releasing drops the aim slow-mo and the turd falls at full speed for the
+    // first stretch; bullet time only snaps in for the final approach (armed
+    // here, engaged in _updatePoop once p.t crosses BT_TRIGGER_FRAC of tImpact).
     if (maxShot && btTarget) {
-      this.btActive = true;
-      this.targetTimeScale = 0.16;
       this.btTarget = btTarget;
       this.btPoop = p;
-      this.audio.slowmo();
+      p.btArmed = true;
     }
     return p;
   }
@@ -1306,8 +1309,17 @@ class Game {
       p.group.rotation.z = p.spin * 0.7;
     }
 
-    // (Bullet time, when it applies, is engaged at fire-time in firePoop — only
-    // for a max-power drop that's heading close to a target.)
+    // Deferred bullet time: an armed max-power drop flies the first BT_TRIGGER_FRAC
+    // of its trip at full speed, then slow-mo snaps in for the final approach as
+    // the turd bears down on its victim — so we don't drown the whole fall in slow-mo.
+    if (p.btArmed && !this.btActive && p.t >= BT_TRIGGER_FRAC * p.tImpact) {
+      p.btArmed = false;
+      this.btActive = true;
+      this.targetTimeScale = 0.16;
+      this.btPoop = p;
+      this.btTarget = p.btTarget;
+      this.audio.slowmo();
+    }
 
     // Collision uses the poop's predicted GROUND landing vs each target's ground
     // position, so accuracy matches exactly what the reticle showed the player.
