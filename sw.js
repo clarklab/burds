@@ -9,7 +9,7 @@
  *   activate, takes control, and the page reloads onto the new build.
  *   That's the whole "push changes when the user regains internet" story.
  */
-const CACHE_VERSION = 'v9';
+const CACHE_VERSION = 'v10';
 const CACHE_NAME = `burds-${CACHE_VERSION}`;
 
 // Everything needed to boot and play with zero network.
@@ -30,6 +30,7 @@ const ASSETS = [
   './src/input.js',
   './src/audio.js',
   './src/effects.js',
+  './src/scores.js',
 ];
 
 self.addEventListener('install', (event) => {
@@ -74,6 +75,9 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return; // let cross-origin pass through
+  // Never cache the leaderboard API — it must always hit the live function so
+  // global scores stay fresh (and POSTs are already skipped above).
+  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/.netlify/')) return;
 
   event.respondWith((async () => {
     const cache = await caches.open(CACHE_NAME);

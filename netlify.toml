@@ -1,0 +1,8 @@
+# Static site served from the repo root, with Netlify Functions for the global
+# leaderboard. No build step — the game is plain ES modules + vendored three.js.
+[build]
+  publish = "."
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"

@@ -79,7 +79,9 @@
   <!-- Start screen -->
   <div id="menu" class="overlay">
     <div class="overlay-card">
-      <img class="logo" src="./logo.webp" width="900" height="483" alt="BURDS — a game about bird turds" />
+      <div class="logo-stage" id="logoStage">
+        <img class="logo" src="./logo.webp" width="900" height="483" alt="BURDS — a game about bird turds" />
+      </div>
       <div class="how-to">
         <div class="howrow"><span class="howicon">👆</span><span>Drag left/right to <b>strafe</b> down the lane (up/down to dive)</span></div>
         <div class="howrow"><span class="howicon">🎯</span><span>Line up under a target — the <b>reticle hones</b> from big to tight</span></div>
@@ -90,6 +92,10 @@
       </div>
       <button id="playBtn" class="big-btn">PLAY</button>
       <p class="best-line">Best: <span id="menuBest">0</span></p>
+      <div class="board" id="menuBoard">
+        <div class="board-title">🏆 Global Top</div>
+        <ol class="board-list" id="menuBoardList"></ol>
+      </div>
     </div>
   </div>
 
@@ -105,6 +111,14 @@
         <div class="go-stat"><span id="goBullseyes">0</span><label>bullseyes</label></div>
       </div>
       <p class="go-blurb" id="goBlurb"></p>
+      <div class="board" id="goBoard">
+        <div class="board-title">🏆 Global High Scores</div>
+        <div class="name-row">
+          <input id="nameInput" maxlength="12" placeholder="YOUR NAME" autocomplete="off" spellcheck="false" />
+          <button id="submitScoreBtn" class="mini-btn">SUBMIT</button>
+        </div>
+        <ol class="board-list" id="goBoardList"></ol>
+      </div>
       <button id="againBtn" class="big-btn">PLAY AGAIN</button>
     </div>
   </div>
