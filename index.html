@@ -128,6 +128,14 @@
         try {
           const reg = await navigator.serviceWorker.register('./sw.js');
 
+          // Nudge a worker that already finished installing and is just sitting
+          // in "waiting" (e.g. an earlier visit installed it but never took
+          // over). This is the case that otherwise leaves players stuck on an
+          // old build until every tab is closed.
+          if (reg.waiting && navigator.serviceWorker.controller) {
+            reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+          }
+
           // A new worker installed while an old one is in control => a fresh
           // build is waiting. Tell it to take over right away.
           reg.addEventListener('updatefound', () => {
@@ -139,6 +147,10 @@
               }
             });
           });
+
+          // Actively check for a new build on this load too (not just on
+          // focus/online), so a fresh deploy is picked up promptly.
+          reg.update().catch(() => {});
 
           // When the new worker takes control, reload once onto the new build.
           let reloaded = false;
