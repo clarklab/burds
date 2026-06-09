@@ -85,6 +85,22 @@ html, body {
   letter-spacing: 2px;
   margin: 2px 0 18px;
 }
+.subtitle-loading { margin: 14px 0 2px; }
+
+/* The BURDS wordmark logo (menu + splash). width/height attrs reserve the
+   aspect ratio so there's no layout shift while it loads. */
+.logo {
+  display: block;
+  width: min(88%, 360px);
+  height: auto;
+  margin: 2px auto 16px;
+  filter: drop-shadow(0 6px 10px rgba(0,0,0,.18));
+}
+.logo-bob { animation: logobob 1.6s ease-in-out infinite; }
+@keyframes logobob {
+  0%,100% { transform: translateY(0) rotate(-1.5deg); }
+  50% { transform: translateY(-8px) rotate(1.5deg); }
+}
 
 .how-to {
   text-align: left;

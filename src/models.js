@@ -39,6 +39,21 @@ function cone(r, h, color, seg = 8) {
   return m;
 }
 
+// A flat low-poly polygon (fan-triangulated) from a list of [x,y,z] points —
+// handy for wings and tails. Double-sided so it reads from above and below.
+function poly(points, color) {
+  const geo = new THREE.BufferGeometry();
+  const v = [];
+  for (let i = 1; i < points.length - 1; i++) {
+    v.push(...points[0], ...points[i], ...points[i + 1]);
+  }
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
+  geo.computeVertexNormals();
+  const m = new THREE.Mesh(geo, mat(color, { side: THREE.DoubleSide }));
+  m.castShadow = true;
+  return m;
+}
+
 const SKIN = [0xf2c9a0, 0xe0a878, 0xc68642, 0x8d5524, 0xffdbac];
 const SHIRTS = [0xff6b6b, 0x4ecdc4, 0xffe66d, 0x6a8eff, 0xa06bff, 0xff9f1c, 0x2ec4b6, 0xff5d8f];
 const pick = (a) => a[(Math.random() * a.length) | 0];
@@ -50,71 +65,104 @@ const pick = (a) => a[(Math.random() * a.length) | 0];
 export function buildSeagull() {
   const g = new THREE.Group();
 
-  const bodyColor = 0xf7f7fb;
-  const body = sphere(1, bodyColor, 10);
-  body.scale.set(1.1, 0.95, 1.7);
+  const bodyColor = 0xf7f7fb;   // clean gull white
+  const tipColor = 0x2b2b30;    // near-black wingtips
+  const beakColor = 0xffa322;   // orange beak/feet
+
+  // Body: a faceted low-poly torpedo (sleek, not a fat oval). Faceted via flat
+  // shading on a 0-subdivision icosahedron.
+  const body = new THREE.Mesh(new THREE.IcosahedronGeometry(0.95, 0), mat(bodyColor));
+  body.scale.set(0.7, 0.74, 1.8);
+  body.castShadow = true;
   g.add(body);
 
-  // tail
-  const tail = box(0.9, 0.18, 0.9, bodyColor, 0, 0.1, 1.5);
-  tail.rotation.x = -0.25;
-  g.add(tail);
-  const tailTip = box(0.9, 0.16, 0.5, 0x444450, 0, 0.04, 2.0);
-  tailTip.rotation.x = -0.25;
-  g.add(tailTip);
+  // Fuller breast up front so the chest reads round, tapering to a slim tail.
+  const breast = new THREE.Mesh(new THREE.IcosahedronGeometry(0.62, 0), mat(bodyColor));
+  breast.scale.set(0.82, 0.82, 1.05);
+  breast.position.set(0, -0.08, -0.75);
+  breast.castShadow = true;
+  g.add(breast);
 
-  // neck + head
-  const head = sphere(0.62, bodyColor, 10);
-  head.position.set(0, 0.55, -1.45);
+  // Small rounded head set forward and slightly raised.
+  const head = new THREE.Mesh(new THREE.IcosahedronGeometry(0.42, 0), mat(bodyColor));
+  head.position.set(0, 0.5, -1.42);
+  head.castShadow = true;
   g.add(head);
 
-  // beak
-  const beak = cone(0.22, 0.7, 0xffa726, 6);
+  // Short orange beak pointing forward (-Z).
+  const beak = cone(0.15, 0.52, beakColor, 5);
   beak.rotation.x = -Math.PI / 2;
-  beak.position.set(0, 0.5, -2.05);
+  beak.position.set(0, 0.46, -1.92);
   g.add(beak);
 
-  // eyes
+  // Eyes.
   for (const sx of [-1, 1]) {
-    const eye = sphere(0.12, 0x1a1a1a, 6);
-    eye.position.set(0.28 * sx, 0.72, -1.78);
+    const eye = sphere(0.08, 0x14140f, 5);
+    eye.position.set(0.21 * sx, 0.58, -1.56);
     g.add(eye);
   }
 
-  // wings — pivot groups so they can flap around the shoulder
-  const wings = [];
+  // Pointed delta tail (white) with a dark tip, drooping slightly.
+  g.add(poly([[-0.34, 0.12, 1.4], [0.34, 0.12, 1.4], [0, 0.0, 2.55]], bodyColor));
+  g.add(poly([[-0.17, 0.05, 2.0], [0.17, 0.05, 2.0], [0, 0.0, 2.6]], tipColor));
+
+  // Tucked orange feet under the rear.
   for (const sx of [-1, 1]) {
-    const pivot = new THREE.Group();
-    pivot.position.set(0.55 * sx, 0.25, -0.1);
-    const inner = box(2.2, 0.14, 1.5, bodyColor, 1.1 * sx, 0, 0);
-    const tip = box(1.6, 0.12, 0.9, 0x3a3a44, 2.6 * sx, -0.05, 0.15);
-    pivot.add(inner, tip);
-    g.add(pivot);
-    wings.push({ pivot, side: sx });
+    const foot = box(0.16, 0.09, 0.5, beakColor, 0.16 * sx, -0.48, 0.55);
+    foot.rotation.x = 0.25;
+    g.add(foot);
   }
 
-  // gray back patch for that gull look
-  const back = box(1.4, 0.2, 2.0, 0xaeb4c0, 0, 0.55, -0.1);
-  back.rotation.x = 0.02;
-  g.add(back);
-
-  // legs (tucked) — little orange nubs
+  // ---- Wings: a two-bone rig per side (shoulder + elbow) so the long gull wing
+  // bends and the tip whips on the downstroke — white inner, black pointed tip.
+  const wings = [];
   for (const sx of [-1, 1]) {
-    const leg = box(0.14, 0.5, 0.14, 0xffa726, 0.25 * sx, -0.75, 0.4);
-    g.add(leg);
+    const shoulder = new THREE.Group();
+    shoulder.position.set(0.32 * sx, 0.16, -0.12);
+
+    // inner wing (white): root -> elbow, swept gently back
+    const inner = poly([
+      [0.0 * sx, 0, -0.42],
+      [1.75 * sx, 0, -0.16],
+      [1.75 * sx, 0, 0.52],
+      [0.05 * sx, 0, 0.8],
+    ], bodyColor);
+    shoulder.add(inner);
+
+    // elbow joint at the mid of the wing
+    const elbow = new THREE.Group();
+    elbow.position.set(1.75 * sx, 0, 0.14);
+
+    // outer wing tip (black): elbow -> a single swept-back point
+    const outer = poly([
+      [0.0 * sx, 0, -0.34],
+      [1.4 * sx, 0, 0.5],
+      [0.0 * sx, 0, 0.34],
+    ], tipColor);
+    elbow.add(outer);
+    shoulder.add(elbow);
+
+    g.add(shoulder);
+    wings.push({ shoulder, elbow, side: sx });
   }
 
   g.scale.setScalar(1.0);
 
+  // Flap: the shoulder sweeps the whole wing up/down while the elbow lags a beat
+  // behind so the black tip trails and curls — a believable wingbeat, not a rigid
+  // flap. Both wings stay symmetric (sign keyed off each side).
   function flap(t, intensity = 1) {
-    // t is seconds; flap speed scales a bit with intensity
-    const a = Math.sin(t * 9) * 0.7 * intensity + 0.12;
-    for (const w of wings) {
-      w.pivot.rotation.z = -a * w.side;
-      w.pivot.rotation.x = Math.cos(t * 9) * 0.08;
+    const w = t * 9;
+    const a = Math.sin(w) * 0.8 * intensity + 0.06;        // shoulder sweep
+    const e = Math.sin(w - 1.0) * 0.55 * intensity + 0.05; // elbow lag/curl
+    const fore = Math.cos(w) * 0.05;                        // slight fore-aft
+    for (const wing of wings) {
+      wing.shoulder.rotation.set(fore, 0, a * wing.side);
+      wing.elbow.rotation.set(0, 0, e * wing.side);
     }
   }
 
+  flap(0, 1);
   return { group: g, flap, wings };
 }
 
