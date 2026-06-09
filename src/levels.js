@@ -41,10 +41,10 @@ function concertLayout() {
   const slots = [];
   const BAND = 200, FAN = 100;
   const stageY = 1.8, stageZ = -50;
-  slots.push({ kind: 'singer', build: () => buildBandMember('mic'),    x: 0,  z: stageZ,     y: stageY, faceY: Math.PI, value: BAND, scale: 1.2, radius: 1.4, vip: true, bull: true });
-  slots.push({ kind: 'guitar', build: () => buildBandMember('guitar'), x: -7, z: stageZ + 1, y: stageY, faceY: Math.PI, value: BAND, scale: 1.2, radius: 1.4, vip: true, bull: true });
-  slots.push({ kind: 'bass',   build: () => buildBandMember('bass'),   x: 7,  z: stageZ + 1, y: stageY, faceY: Math.PI, value: BAND, scale: 1.2, radius: 1.4, vip: true, bull: true });
-  slots.push({ kind: 'drums',  build: () => buildBandMember('drums'),  x: 0,  z: stageZ - 3, y: stageY, faceY: Math.PI, value: BAND, scale: 1.2, radius: 1.4, vip: true, bull: true });
+  slots.push({ kind: 'singer', build: () => buildBandMember('mic'),    x: 0,  z: stageZ,     y: stageY, faceY: Math.PI, value: BAND, scale: 1.2, radius: 1.4, vip: true, bull: true, band: true });
+  slots.push({ kind: 'guitar', build: () => buildBandMember('guitar'), x: -7, z: stageZ + 1, y: stageY, faceY: Math.PI, value: BAND, scale: 1.2, radius: 1.4, vip: true, bull: true, band: true });
+  slots.push({ kind: 'bass',   build: () => buildBandMember('bass'),   x: 7,  z: stageZ + 1, y: stageY, faceY: Math.PI, value: BAND, scale: 1.2, radius: 1.4, vip: true, bull: true, band: true });
+  slots.push({ kind: 'drums',  build: () => buildBandMember('drums'),  x: 0,  z: stageZ - 3, y: stageY, faceY: Math.PI, value: BAND, scale: 1.2, radius: 1.4, vip: true, bull: true, band: true });
   // a dense, packed throng of fans facing the stage (-Z)
   const rows = 14, cols = [-10, -7.5, -5, -2.5, 0, 2.5, 5, 7.5, 10];
   for (let r = 0; r < rows; r++) {

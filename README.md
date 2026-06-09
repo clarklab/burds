@@ -89,17 +89,27 @@ the drops as targets stream toward you.
 
 Targets: beachgoers, kids, picnics, cyclists, and cars (cyclists and cars sweep
 across the lane like crossing traffic, so you'll need to lead them). They're all
-sized up nice and big, so they're forgiving to hit.
+sized up nice and big, so they're forgiving to hit. The crowd is *alive*:
+beachgoers stroll about with swinging arms, kids sprint circles towing
+balloons, the convertible has a driver at the wheel, picnickers lounge on the
+blanket — and anyone about to be splatted gasps, faces the incoming turd and
+throws their arms up in panic.
 
 The lane runs down a sun-drenched **Croatian coastline** — slender cypresses,
-umbrella pines and palms stream past on the shoulders, with rocks lining the
-shore.
+umbrella pines and palms stream past on the shoulders, with rocks, surf foam,
+towels, sandcastles and lifeguard towers lining the shore, sailboats bobbing
+out on the bay, clouds drifting overhead and hazy headlands on the horizon.
 
 ## Tech notes
 
 - **Procedural low-poly models** — the bird, people, kid, biker, picnic, car,
   palms and umbrellas are all generated from primitives with flat shading. No
   external FBX/OBJ assets to download or break.
+- **Built for phones** — primitive geometries are cached and shared across the
+  whole cast (a 125-person crowd shares one torso buffer), every static mesh
+  has its matrix frozen so per-frame CPU stays low, render resolution steps
+  down automatically on devices that can't hold frame rate, and a lost WebGL
+  context recovers with a clean reload.
 - **Analytic projectile motion** — the poop integrates position in closed form,
   so the predicted-landing reticle is always truthful.
 - **WebAudio synth** — all sound effects are generated at runtime; no audio
@@ -135,4 +145,11 @@ with no console errors:
 ```bash
 npm i -D playwright   # or use a global install
 node test/smoke.mjs
+```
+
+There's also a visual QA harness that boots all three venues on auto-pilot,
+screenshots each one (`test/shot-*.png`) and fails on any console error:
+
+```bash
+node test/venues.mjs
 ```
