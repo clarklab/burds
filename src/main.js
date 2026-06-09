@@ -68,7 +68,6 @@ const BLAST_MAX = 16;        // cap on how many targets one drop can splat
 const RET_BIG = 3.0;         // 3x oversized when nothing is lined up
 const RET_FIRE = 0.6;        // final firing size when a hit is dialled in
 
-const BT_LEAD = 0.5;         // sim-seconds before impact to start slow-mo (earlier = more drama)
 
 // ----- SUPER TURD MODE -----
 const SUPER_TIME = 15;       // seconds of giant turds from the first super turd
@@ -89,6 +88,11 @@ const TIME_BONUS_BULLSEYE = 10; // seconds added to the timer for a bullseye (in
 // A poop predicted to land within this of a target triggers bullet-time, so even
 // near-misses get the slow-mo treatment — bullet time fires far more often.
 const BT_CATCH = 3.0;
+// Bullet time is reserved for MAX-POWER drops: holding the turd to full charge
+// slows time so you can line up the shot, and that slow-mo carries through the
+// drop when it's on target.
+const MAX_CHARGE_BT = 0.999; // charge level that counts as "max power"
+const AIM_TIME_SCALE = 0.3;  // slow-mo factor while holding a maxed turd to aim
 
 class Game {
   constructor() {
@@ -623,11 +627,11 @@ class Game {
     // Analytic projectile: pos(t) = p0 + v0*t + 0.5*g*t^2. Integrating exactly
     // (rather than Euler) means the predicted-landing reticle is truthful.
     const landing = this._predictLanding(p0, v0) || p0.clone();
-    // Pre-compute which target (if any) this poop will hit, and exactly when it
-    // reaches that target's height — used to time the slow-mo lead-in. Bullet
-    // time is a beach flourish; the fast circuit levels skip it.
+    // Only a MAX-POWER drop is eligible for bullet time. Find the target (if any)
+    // it's heading close to, and when it reaches that target's height.
+    const maxShot = power >= MAX_CHARGE_BT;
     let btTarget = null, tImpact = Infinity;
-    if (this.levelMode !== 'circuit') {
+    if (maxShot) {
       for (const tg of this.targets.targets) {
         if (!tg.alive) continue;
         const d = Math.hypot(landing.x - tg.group.position.x, landing.z - tg.group.position.z);
@@ -639,10 +643,19 @@ class Game {
         }
       }
     }
-    this.poop = { group, p0: p0.clone(), v0: v0.clone(), t: 0, pos: p0.clone(), vel: v0.clone(), prevY: p0.y, landing, btTarget, tImpact, power, turdScale, catch: catchR, blast, fire, spin: 0 };
+    this.poop = { group, p0: p0.clone(), v0: v0.clone(), t: 0, pos: p0.clone(), vel: v0.clone(), prevY: p0.y, landing, btTarget, tImpact, maxShot, power, turdScale, catch: catchR, blast, fire, spin: 0 };
     this.input.setEnabled(false);
     this.audio.poop();
     this.audio.whoosh();
+    // Carry the aim slow-mo straight into the drop when a maxed shot is on target;
+    // otherwise time snaps back to normal for the fall (no bullet time when the
+    // turd isn't close to anyone).
+    if (maxShot && btTarget) {
+      this.btActive = true;
+      this.targetTimeScale = 0.16;
+      this.btTarget = btTarget;
+      this.audio.slowmo();
+    }
   }
 
   // Resolve a landed drop. `hits` is the list of targets caught in the splash
@@ -902,6 +915,17 @@ class Game {
     const fired = cinematic ? null : this.input.consumeFire();
     if (fired !== null && !this.poop) this.firePoop(fired);
 
+    // ---- AIM BULLET TIME ----
+    // Holding a turd to full charge slows time so you can line up the shot. It
+    // engages only while charging at max with no turd already falling; otherwise
+    // (and when not in a drop bullet-time) time runs normally.
+    const aimBT = !cinematic && !this.poop && this.input.charging && this.input.charge >= MAX_CHARGE_BT;
+    if (aimBT) {
+      this.targetTimeScale = AIM_TIME_SCALE;
+    } else if (!this.btActive && this.btHold <= 0 && !cinematic) {
+      this.targetTimeScale = 1;
+    }
+
     // charge audio
     if (this.input.charging && !cinematic) {
       this.audio.startCharge();
@@ -1113,14 +1137,8 @@ class Game {
       p.group.rotation.z = p.spin * 0.7;
     }
 
-    // engage slow-mo a fixed lead-time before impact with the doomed target
-    if (!this.btActive && p.btTarget && p.btTarget.alive && p.vel.y < 0 &&
-        (p.tImpact - p.t) <= BT_LEAD) {
-      this.btActive = true;
-      this.targetTimeScale = 0.16;
-      this.btTarget = p.btTarget;
-      this.audio.slowmo();
-    }
+    // (Bullet time, when it applies, is engaged at fire-time in firePoop — only
+    // for a max-power drop that's heading close to a target.)
 
     // Collision uses the poop's predicted GROUND landing vs each target's ground
     // position, so accuracy matches exactly what the reticle showed the player.

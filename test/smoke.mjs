@@ -234,7 +234,7 @@ await page.evaluate(() => {
   tg.alive = true; tg.orbit = false;
   tg.group.position.set(land.x, 0, land.z);
   if (tg.bullseye) tg.bullseye.visible = true;
-  g.firePoop(0);
+  g.firePoop(1); // max power — bullet time is now reserved for fully-charged drops
 });
 // poll until bullet time engaged, let camera settle, screenshot while still falling
 let btShot = false;
