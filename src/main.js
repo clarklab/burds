@@ -4,6 +4,38 @@ import { buildSeagull, buildPoop, buildFireball } from './models.js';
 import { Input } from './input.js';
 import { Audio } from './audio.js';
 import { Effects, buildReticle, buildBirdShadow, buildSuperAura, buildFireAura } from './effects.js';
+import { getName, fetchScores, submitScore, flushPending, cachedScores } from './scores.js';
+
+// Render a few flap frames of the actual seagull to transparent PNG sprites,
+// used for the two birds that orbit the menu logo. One-off, on a throwaway
+// renderer; returns [] (and the birds are simply skipped) if WebGL/readback
+// isn't available.
+function renderBirdSprites() {
+  try {
+    const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true });
+    renderer.setSize(128, 128);
+    renderer.setPixelRatio(2);
+    const scene = new THREE.Scene();
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x8090a0, 1.15));
+    const dir = new THREE.DirectionalLight(0xffffff, 1.3); dir.position.set(2, 5, 4); scene.add(dir);
+    const gull = buildSeagull();
+    gull.group.rotation.set(0.12, -Math.PI / 2, 0); // face screen-right, slight nose-down
+    scene.add(gull.group);
+    const cam = new THREE.PerspectiveCamera(32, 1, 0.1, 100);
+    cam.position.set(-1.6, 2.4, 8.8);
+    cam.lookAt(0, 0.1, 0);
+    const frames = [];
+    for (const t of [0.1745, 0.349, 0.5236, 0.349]) { // wings up, mid, down, mid
+      gull.flap(t, 1);
+      renderer.render(scene, cam);
+      frames.push(renderer.domElement.toDataURL('image/png'));
+    }
+    renderer.dispose();
+    return frames;
+  } catch (e) {
+    return [];
+  }
+}
 
 // ----- tuning constants -----
 const BIRD_SPEED = 24;       // constant forward flight speed down the lane
@@ -141,10 +173,23 @@ class Game {
       goBlurb: document.getElementById('goBlurb'),
       menuBest: document.getElementById('menuBest'),
       goTitle: document.getElementById('goTitle'),
+      logoStage: document.getElementById('logoStage'),
+      menuBoardList: document.getElementById('menuBoardList'),
+      goBoardList: document.getElementById('goBoardList'),
+      nameInput: document.getElementById('nameInput'),
+      submitScoreBtn: document.getElementById('submitScoreBtn'),
     };
     this.dom.menuBest.textContent = this.best;
 
+    // leaderboard state
+    this._lbScores = cachedScores();
+    this._goScore = 0;
+    this._submitted = false;
+    this._myId = null;
+
     this._bindUI();
+    this._initMenuBirds();
+    this._initLeaderboard();
     this._resize();
     window.addEventListener('resize', () => this._resize());
 
@@ -158,6 +203,124 @@ class Game {
     const start = () => { this.audio.unlock(); this.startRound(); };
     document.getElementById('playBtn').addEventListener('click', start);
     document.getElementById('againBtn').addEventListener('click', start);
+  }
+
+  // ---- menu birds: two seagulls orbiting the logo (in front, then behind) ----
+  _initMenuBirds() {
+    this._menuBirds = [];
+    const stage = this.dom.logoStage;
+    if (!stage) return;
+    const frames = renderBirdSprites();
+    this._birdFrames = frames;
+    if (!frames.length) return;
+    for (let i = 0; i < 2; i++) {
+      const el = document.createElement('img');
+      el.className = 'menu-bird';
+      el.src = frames[0];
+      el.alt = '';
+      el._fi = 0;
+      stage.appendChild(el);
+      this._menuBirds.push({ el, phase: i * Math.PI });
+    }
+  }
+
+  _updateMenuBirds(time) {
+    const birds = this._menuBirds;
+    if (!birds || !birds.length) return;
+    const stage = this.dom.logoStage;
+    const W = stage.clientWidth, H = stage.clientHeight;
+    if (!W) return;
+    const cx = W * 0.5, cy = H * 0.5;
+    const ax = W * 0.58, ay = H * 0.6;
+    const frames = this._birdFrames;
+    for (const b of birds) {
+      const th = time * 0.55 + b.phase;
+      const depth = Math.cos(th);                 // +1 in front, -1 behind
+      const x = cx + Math.sin(th) * ax;
+      const y = cy + depth * ay * 0.42;           // dips low+near in front, rides high+far behind
+      const scale = 0.62 + 0.5 * (depth * 0.5 + 0.5); // bigger in front
+      const flip = Math.cos(th) >= 0 ? 1 : -1;    // face travel direction
+      const bank = -Math.sin(th) * 10;
+      b.el.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) scale(${(flip * scale).toFixed(3)}, ${scale.toFixed(3)}) rotate(${bank.toFixed(1)}deg)`;
+      b.el.style.zIndex = depth >= 0 ? 2 : 0;     // in front of / behind the logo
+      const fi = ((time * 8 + b.phase * 1.5) | 0) % frames.length;
+      if (b.el._fi !== fi) { b.el._fi = fi; b.el.src = frames[fi]; }
+    }
+  }
+
+  // ---- global leaderboard ----
+  _initLeaderboard() {
+    this.dom.nameInput.value = getName();
+    const submit = () => this._submitScore();
+    this.dom.submitScoreBtn.addEventListener('click', submit);
+    this.dom.nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+    this.dom.nameInput.addEventListener('input', () => {
+      if (this.state === 'gameover' && !this._submitted) this._renderGoBoard();
+    });
+    // render whatever we have cached immediately, then refresh from the server
+    this._renderMenuBoard();
+    fetchScores().then((s) => { this._lbScores = s; this._renderMenuBoard(); if (this.state === 'gameover') this._renderGoBoard(); });
+    flushPending();
+    window.addEventListener('online', () => {
+      flushPending().then(() => fetchScores()).then((s) => { this._lbScores = s; this._renderMenuBoard(); });
+    });
+  }
+
+  _fillBoard(listEl, scores, limit, meId) {
+    if (!listEl) return;
+    listEl.innerHTML = '';
+    const top = scores.slice(0, limit);
+    if (!top.length) {
+      const li = document.createElement('li');
+      li.className = 'board-empty';
+      li.textContent = 'No scores yet — be the first!';
+      listEl.appendChild(li);
+      return;
+    }
+    top.forEach((e, i) => {
+      const li = document.createElement('li');
+      if (e.me || (meId && e.id === meId)) li.className = 'me';
+      const rank = document.createElement('span'); rank.className = 'rank'; rank.textContent = String(i + 1);
+      const name = document.createElement('span'); name.className = 'pname'; name.textContent = e.name || 'BURD';
+      const score = document.createElement('span'); score.className = 'pscore'; score.textContent = String(e.score);
+      li.append(rank, name, score);
+      listEl.appendChild(li);
+    });
+  }
+
+  _renderMenuBoard() {
+    this._fillBoard(this.dom.menuBoardList, this._lbScores || [], 5, this._myId);
+  }
+
+  _renderGoBoard() {
+    const scores = (this._lbScores || []).slice();
+    let meId = this._myId;
+    if (!this._submitted) {
+      // provisional row so you can see where this run would land before you submit
+      const prov = { id: '__me__', name: (this.dom.nameInput.value || 'YOU').toUpperCase(), score: this._goScore, me: true };
+      scores.push(prov);
+      scores.sort((a, b) => b.score - a.score);
+      meId = '__me__';
+    }
+    this._fillBoard(this.dom.goBoardList, scores, 10, meId);
+  }
+
+  _submitScore() {
+    if (this._submitted) return;
+    const name = (this.dom.nameInput.value || '').trim() || 'BURD';
+    const { list, entry } = submitScore(name, this._goScore, (merged) => {
+      this._lbScores = merged;
+      this._renderGoBoard();
+      this._renderMenuBoard();
+    });
+    this._submitted = true;
+    this._myId = entry.id;
+    this._lbScores = list;
+    this.dom.submitScoreBtn.disabled = true;
+    this.dom.submitScoreBtn.textContent = 'SUBMITTED ✓';
+    this.dom.nameInput.blur();
+    this._renderGoBoard();
+    this._renderMenuBoard();
   }
 
   _resize() {
@@ -213,6 +376,17 @@ class Game {
     this.dom.goBullseyes.textContent = this.bullseyes;
     this.dom.goBlurb.textContent = this._blurb();
     this.dom.goTitle.textContent = this.score === this.best && this.score > 0 ? 'NEW BEST! 🏆' : "TIME'S UP!";
+
+    // leaderboard: show where this run lands, ready to submit
+    this._goScore = this.score;
+    this._submitted = false;
+    this._myId = null;
+    this.dom.nameInput.value = getName();
+    this.dom.submitScoreBtn.disabled = this.score <= 0;
+    this.dom.submitScoreBtn.textContent = 'SUBMIT';
+    this._renderGoBoard();
+    fetchScores().then((s) => { this._lbScores = s; if (this.state === 'gameover') this._renderGoBoard(); this._renderMenuBoard(); });
+
     this.dom.hud.classList.add('hidden');
     this.dom.gameover.classList.remove('hidden');
   }
@@ -457,6 +631,9 @@ class Game {
 
     // keep the scenery centred on the bird so the straightaway reads as endless
     this.world.update(this.pos);
+
+    // two gulls orbiting the logo on the start screen
+    if (this.state === 'menu') this._updateMenuBirds(this.clock.elapsedTime);
 
     this.effects.update(dt);
     this.renderer.render(this.scene, this.camera);

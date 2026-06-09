@@ -9,5 +9,8 @@
   },
   "devDependencies": {
     "playwright": "^1.60.0"
+  },
+  "dependencies": {
+    "@netlify/blobs": "^10.7.9"
   }
 }

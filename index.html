@@ -79,7 +79,9 @@
   <!-- Start screen -->
   <div id="menu" class="overlay">
     <div class="overlay-card">
-      <img class="logo" src="./logo.webp" width="900" height="483" alt="BURDS — a game about bird turds" />
+      <div class="logo-stage" id="logoStage">
+        <img class="logo" src="./logo.webp" width="900" height="483" alt="BURDS — a game about bird turds" />
+      </div>
       <div class="how-to">
         <div class="howrow"><span class="howicon">👆</span><span>Drag left/right to <b>strafe</b> down the lane (up/down to dive)</span></div>
         <div class="howrow"><span class="howicon">🎯</span><span>Line up under a target — the <b>reticle hones</b> from big to tight</span></div>
@@ -90,6 +92,10 @@
       </div>
       <button id="playBtn" class="big-btn">PLAY</button>
       <p class="best-line">Best: <span id="menuBest">0</span></p>
+      <div class="board" id="menuBoard">
+        <div class="board-title">🏆 Global Top</div>
+        <ol class="board-list" id="menuBoardList"></ol>
+      </div>
     </div>
   </div>
 
@@ -105,6 +111,14 @@
         <div class="go-stat"><span id="goBullseyes">0</span><label>bullseyes</label></div>
       </div>
       <p class="go-blurb" id="goBlurb"></p>
+      <div class="board" id="goBoard">
+        <div class="board-title">🏆 Global High Scores</div>
+        <div class="name-row">
+          <input id="nameInput" maxlength="12" placeholder="YOUR NAME" autocomplete="off" spellcheck="false" />
+          <button id="submitScoreBtn" class="mini-btn">SUBMIT</button>
+        </div>
+        <ol class="board-list" id="goBoardList"></ol>
+      </div>
       <button id="againBtn" class="big-btn">PLAY AGAIN</button>
     </div>
   </div>
@@ -128,6 +142,14 @@
         try {
           const reg = await navigator.serviceWorker.register('./sw.js');
 
+          // Nudge a worker that already finished installing and is just sitting
+          // in "waiting" (e.g. an earlier visit installed it but never took
+          // over). This is the case that otherwise leaves players stuck on an
+          // old build until every tab is closed.
+          if (reg.waiting && navigator.serviceWorker.controller) {
+            reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+          }
+
           // A new worker installed while an old one is in control => a fresh
           // build is waiting. Tell it to take over right away.
           reg.addEventListener('updatefound', () => {
@@ -139,6 +161,10 @@
               }
             });
           });
+
+          // Actively check for a new build on this load too (not just on
+          // focus/online), so a fresh deploy is picked up promptly.
+          reg.update().catch(() => {});
 
           // When the new worker takes control, reload once onto the new build.
           let reloaded = false;

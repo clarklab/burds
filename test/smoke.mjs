@@ -6,11 +6,37 @@ import { extname, join, normalize } from 'path';
 const ROOT = new URL('..', import.meta.url).pathname;
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.json': 'application/json', '.webmanifest': 'application/manifest+json' };
 
+// In-memory stand-in for the Netlify leaderboard function (Netlify Blobs isn't
+// available in the test harness), so the client's network path is exercised.
+const LB = [];
 const server = createServer(async (req, res) => {
+  const p = decodeURIComponent(req.url.split('?')[0]);
+  if (p.startsWith('/api/scores')) {
+    if (req.method === 'GET') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ scores: LB }));
+      return;
+    }
+    if (req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => { body += c; });
+      req.on('end', () => {
+        try {
+          const e = JSON.parse(body);
+          if (!LB.some((x) => x.id === e.id)) LB.push({ id: e.id, name: String(e.name).slice(0, 12), score: Math.round(e.score), ts: Date.now() });
+          LB.sort((a, b) => b.score - a.score);
+        } catch {}
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ scores: LB.slice(0, 50) }));
+      });
+      return;
+    }
+    res.writeHead(405); res.end('no'); return;
+  }
   try {
-    let p = decodeURIComponent(req.url.split('?')[0]);
-    if (p === '/') p = '/index.html';
-    const fp = join(ROOT, normalize(p));
+    let q = p;
+    if (q === '/') q = '/index.html';
+    const fp = join(ROOT, normalize(q));
     const data = await readFile(fp);
     res.writeHead(200, { 'content-type': MIME[extname(fp)] || 'application/octet-stream' });
     res.end(data);
@@ -79,7 +105,7 @@ const hit = await page.evaluate(async () => {
   const v0 = g._launchVel(0);
   const land = g._predictLanding(p0, v0);
   const tg = g.targets.targets[0];
-  tg.alive = true; tg.orbit = false; // freeze any ring drift for a repeatable shot
+  tg.alive = true; tg.orbit = false; tg.special = null; // normal target, repeatable shot
   tg.group.position.set(land.x, 0, land.z);
   if (tg.bullseye) tg.bullseye.visible = true;
   g._dbg = { land: [land.x.toFixed(1), land.z.toFixed(1)], tgType: tg.key, radius: tg.radius };
@@ -108,6 +134,7 @@ console.log('score after aimed poop:', score);
 //     power-up activates (timer, aura, cinematic) and grows the turds ---
 const sup = await page.evaluate(async () => {
   const g = window.game;
+  g._endSuper(); // reset any super state leaked from earlier (e.g. a random super turd)
   g.pos.set(0, 36, 60); g.yaw = Math.PI; g.pitch = 0; g.roll = 0;
   if (g.poop) { g.scene.remove(g.poop.group); g.poop = null; }
   g.btActive = false; g.btHold = 0; g.btImpact = null; g.targetTimeScale = 1;
@@ -239,6 +266,33 @@ for (let i = 0; i < 60; i++) {
 const goState = await page.evaluate(() => ({ state: window.game.state, timeLeft: window.game.timeLeft }));
 console.log('game over screen visible:', goVisible, JSON.stringify(goState));
 await page.screenshot({ path: join(ROOT, 'test/shot-gameover.png') });
+
+// --- leaderboard: submit a score and verify it shows up highlighted (instant
+//     local reflection) and reconciles with the (mock) server ---
+const lb = await page.evaluate(async () => {
+  const g = window.game;
+  g._goScore = 4242; g._submitted = false; g._myId = null;
+  document.getElementById('nameInput').value = 'TESTGULL';
+  document.getElementById('submitScoreBtn').disabled = false;
+  g._renderGoBoard();
+  g._submitScore();
+  const meNow = document.querySelector('#goBoardList li.me'); // optimistic, pre-network
+  await new Promise((r) => setTimeout(r, 500));
+  const meEl = document.querySelector('#goBoardList li.me');
+  return {
+    optimistic: meNow ? meNow.textContent : null,
+    me: meEl ? meEl.textContent : null,
+    btn: document.getElementById('submitScoreBtn').textContent,
+    menu: [...document.querySelectorAll('#menuBoardList li')].map((li) => li.textContent),
+  };
+});
+console.log('LEADERBOARD TEST:', JSON.stringify(lb));
+if (!lb.optimistic || !lb.optimistic.includes('TESTGULL')) {
+  throw new Error('leaderboard did not reflect locally on submit: ' + JSON.stringify(lb));
+}
+if (!lb.me || !lb.me.includes('TESTGULL') || !lb.me.includes('4242')) {
+  throw new Error('leaderboard submit/sync failed: ' + JSON.stringify(lb));
+}
 
 // verify renderer canvas has non-trivial pixels (not all sky) by sampling
 const drawn = await page.evaluate(() => {

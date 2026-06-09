@@ -9,7 +9,7 @@
  *   activate, takes control, and the page reloads onto the new build.
  *   That's the whole "push changes when the user regains internet" story.
  */
-const CACHE_VERSION = 'v8';
+const CACHE_VERSION = 'v10';
 const CACHE_NAME = `burds-${CACHE_VERSION}`;
 
 // Everything needed to boot and play with zero network.
@@ -30,14 +30,26 @@ const ASSETS = [
   './src/input.js',
   './src/audio.js',
   './src/effects.js',
+  './src/scores.js',
 ];
 
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE_NAME);
-    // `cache: 'reload'` bypasses the HTTP cache so a version bump always
-    // pulls the genuinely new bytes, not a stale browser-cached copy.
-    await cache.addAll(ASSETS.map((url) => new Request(url, { cache: 'reload' })));
+    // `cache: 'reload'` bypasses the HTTP cache so a version bump always pulls
+    // the genuinely new bytes, not a stale browser-cached copy. We precache
+    // resiliently (allSettled, not addAll) so a single flaky fetch on a spotty
+    // mobile connection can't abort the whole update — any file that misses is
+    // simply re-fetched and cached on demand by the fetch handler below.
+    await Promise.allSettled(
+      ASSETS.map((url) => cache.add(new Request(url, { cache: 'reload' })))
+    );
+    // Activate this build immediately rather than waiting for every tab to be
+    // closed. Without this a freshly-deployed worker can sit "waiting" forever
+    // (the usual reason a new version refuses to show up on mobile). Paired with
+    // the controllerchange reload in index.html, a new deploy now takes over on
+    // the next load with a connection — no manual cache-clearing needed.
+    await self.skipWaiting();
   })());
 });
 
@@ -63,6 +75,9 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return; // let cross-origin pass through
+  // Never cache the leaderboard API — it must always hit the live function so
+  // global scores stay fresh (and POSTs are already skipped above).
+  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/.netlify/')) return;
 
   event.respondWith((async () => {
     const cache = await caches.open(CACHE_NAME);

@@ -102,6 +102,91 @@ html, body {
   50% { transform: translateY(-8px) rotate(1.5deg); }
 }
 
+/* Stage for the two seagulls that orbit the logo (in front, then behind). The
+   logo sits at z-index 1; JS flips each bird above/below it as it circles. */
+.logo-stage { position: relative; display: block; }
+.logo-stage .logo { position: relative; z-index: 1; }
+.menu-bird {
+  position: absolute;
+  left: 0; top: 0;
+  width: 76px;
+  margin-left: -38px;   /* centre the sprite on its transform origin */
+  margin-top: -38px;
+  pointer-events: none;
+  will-change: transform;
+  filter: drop-shadow(0 3px 4px rgba(0,0,0,.18));
+}
+
+/* ---------- Leaderboard ---------- */
+.board {
+  margin-top: 16px;
+  text-align: left;
+  background: #f1f6f9;
+  border-radius: 16px;
+  padding: 12px 14px;
+}
+.board-title {
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #5a6b7a;
+  margin-bottom: 8px;
+  text-align: center;
+}
+.board-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
+.board-list li {
+  display: grid;
+  grid-template-columns: 22px 1fr auto;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #3a4a58;
+  padding: 4px 8px;
+  border-radius: 9px;
+}
+.board-list li .rank { color: #9aa8b4; font-weight: 800; }
+.board-list li .pname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: uppercase; letter-spacing: .5px; }
+.board-list li .pscore { font-weight: 900; color: var(--ink); font-variant-numeric: tabular-nums; }
+.board-list li.me { background: linear-gradient(180deg, #fff0d9, #ffe1b3); color: #8a5a14; }
+.board-list li.me .pscore { color: #c2710e; }
+.board-list li.me .rank { color: #d89a3a; }
+.board-empty { font-size: 13px; color: #8a98a6; text-align: center; padding: 6px 0; }
+
+.name-row { display: flex; gap: 8px; margin-bottom: 10px; }
+#nameInput {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  font-size: 16px;        /* >=16px so iOS doesn't zoom on focus */
+  font-weight: 800;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--ink);
+  background: #fff;
+  border: 2px solid #d7e0e7;
+  border-radius: 12px;
+  outline: none;
+}
+#nameInput:focus { border-color: #ff9f1c; }
+.mini-btn {
+  flex: none;
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 900;
+  letter-spacing: 1px;
+  color: #fff;
+  background: linear-gradient(180deg, #ffb02e, #ff8a1e);
+  border: none;
+  border-radius: 12px;
+  box-shadow: 0 4px 0 #d2710e;
+  cursor: pointer;
+  transition: transform .08s, box-shadow .08s;
+}
+.mini-btn:active { transform: translateY(3px); box-shadow: 0 1px 0 #d2710e; }
+.mini-btn:disabled { filter: grayscale(.5) brightness(1.05); opacity: .7; box-shadow: 0 4px 0 #b9c4cc; }
+
 .how-to {
   text-align: left;
   background: #f1f6f9;
