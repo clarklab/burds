@@ -6,6 +6,10 @@ import { Audio } from './audio.js';
 import { Effects, buildReticle, buildBirdShadow, buildSuperAura, buildFireAura } from './effects.js';
 import { getName, fetchScores, submitScore, flushPending, cachedScores } from './scores.js';
 import { LEVELS, LEVELS_BY_ID, DEFAULT_LEVEL } from './levels.js';
+import { iconSvg } from './icons.js';
+
+// Icon name for each tier-3 weapon mode (badge + toast + picker).
+const MODE_ICON = { fire: 'fire', scatter: 'scatter', machinegun: 'machinegun' };
 
 // Render a few flap frames of the actual seagull to transparent PNG sprites,
 // used for the two birds that orbit the menu logo. One-off, on a throwaway
@@ -76,8 +80,17 @@ const SUPER_SPIN_TIME = 1.8; // length of the camera-orbit transformation cinema
 const SUPER_TURD_MULT = 2.5; // base turd size multiplier while super mode is active
 const SUPER_STACK_SIZE = 0.7;// extra size multiplier added per stack beyond the first
 const TURD_SCALE_MAX = 6.5;  // cap so giant turds don't swallow the whole screen
-const FIRE_STACK = 3;        // stacks needed to ignite TURD FIRE mode
+const FIRE_STACK = 3;        // stacks needed to unlock a tier-3 weapon mode
 const TURD_FOOTPRINT = 0.7;  // extra catch radius per unit of turd scale over 1 (bigger turd = easier hit)
+
+// ----- tier-3 weapon modes (picked from a slow-mo menu on the 3rd stack) -----
+const MODE_BONUS_TIME = 20;  // seconds added to the super window when you pick a mode
+const PICKER_SCALE = 0.06;   // time slows almost to a stop while the picker is open
+const SCATTER_COUNT = 5;     // pellets per scatter volley (Contra-style spread)
+const SCATTER_SPREAD = 0.62; // total fan angle (radians) across the spread
+const SCATTER_SIZE = 0.62;   // pellets are smaller than a normal turd
+const MG_RATE = 3;           // machine-gun turds per second
+const MG_POWER = 0.42;       // fixed hold-power for machine-gun turds
 
 // ----- scoring / hit feel -----
 const HIT_PAD = 0.6;         // horizontal slack added to a target's catch radius (more forgiving hits)
@@ -155,8 +168,10 @@ class Game {
     this._bullseyeReady = false;
     this._retScale = 1;
 
-    // poop
-    this.poop = null;
+    // poops in flight (an array so scatter + machine gun can have many at once);
+    // btPoop is the single one that owns bullet-time framing, when eligible.
+    this.poops = [];
+    this.btPoop = null;
 
     // time / bullet-time
     this.timeScale = 1;
@@ -168,7 +183,11 @@ class Game {
     this.superTimer = 0;   // seconds of giant-turd mode remaining
     this.superSpin = 0;    // seconds of transformation cinematic remaining
     this.superStack = 0;   // how many super turds are stacked (0 = inactive)
-    this.fireMode = false; // 3+ stacks => TURD FIRE (flaming-comet turds)
+    // tier-3 weapon: 'normal' (giant turds) until the 3rd stack lets you pick
+    // 'fire' | 'scatter' | 'machinegun' from the slow-mo menu.
+    this.weaponMode = 'normal';
+    this.pickerOpen = false; // the slow-mo mode menu is up
+    this._mgCooldown = 0;    // machine-gun fire-rate timer
 
     // round
     this.state = 'menu';
@@ -200,6 +219,7 @@ class Game {
       toast: document.getElementById('hitToast'),
       chargeFg: document.querySelector('.charge-fg'),
       poopBtn: document.getElementById('poopBtn'),
+      weaponPicker: document.getElementById('weaponPicker'),
       turdCam: document.getElementById('turdCam'),
       superBadge: document.getElementById('superBadge'),
       superBolt: document.getElementById('superBolt'),
@@ -250,6 +270,12 @@ class Game {
     document.getElementById('againBtn').addEventListener('click', start);
     const menuBtn = document.getElementById('menuBtn');
     if (menuBtn) menuBtn.addEventListener('click', () => this._showMenu());
+
+    // weapon picker (slow-mo menu on the 3rd super stack)
+    for (const btn of this.dom.weaponPicker.querySelectorAll('[data-mode]')) {
+      // pointerdown so a tap registers instantly during the slow-mo freeze
+      btn.addEventListener('pointerdown', (e) => { e.preventDefault(); this._chooseWeapon(btn.dataset.mode); });
+    }
   }
 
   // Return from the game-over screen to the menu so a different level can be
@@ -286,7 +312,7 @@ class Game {
         const btn = document.createElement('button');
         btn.className = 'level-chip' + (l.id === this.levelId ? ' selected' : '');
         btn.dataset.level = l.id;
-        btn.innerHTML = `<span class="lc-emoji">${l.emoji}</span><span class="lc-name">${l.name}</span>`;
+        btn.innerHTML = `<span class="lc-emoji">${iconSvg(l.icon, { size: 26 })}</span><span class="lc-name">${l.name}</span>`;
         btn.addEventListener('click', () => this._selectLevel(l.id));
         pick.appendChild(btn);
       }
@@ -301,7 +327,7 @@ class Game {
     for (const row of this.level.howto) {
       const div = document.createElement('div');
       div.className = 'howrow';
-      div.innerHTML = `<span class="howicon">${row.icon}</span><span>${row.html}</span>`;
+      div.innerHTML = `<span class="howicon">${iconSvg(row.icon, { size: 22 })}</span><span>${row.html}</span>`;
       el.appendChild(div);
     }
   }
@@ -317,7 +343,7 @@ class Game {
       for (const c of this.dom.levelPick.children) c.classList.toggle('selected', c.dataset.level === id);
     }
     this.dom.menuBest.textContent = this.best;
-    if (this.dom.menuBoardTitle) this.dom.menuBoardTitle.textContent = `🏆 ${this.level.name} Top`;
+    if (this.dom.menuBoardTitle) this.dom.menuBoardTitle.innerHTML = iconSvg('trophy', { size: 15, cls: 'title-ic' }) + `<span>${this.level.name} Top</span>`;
     this._renderHowTo();
     // swap the menu backdrop world to the chosen venue
     this._buildWorldFor(id);
@@ -383,7 +409,7 @@ class Game {
     this.dom.nameInput.addEventListener('input', () => {
       if (this.state === 'gameover' && !this._submitted) this._renderGoBoard();
     });
-    if (this.dom.menuBoardTitle) this.dom.menuBoardTitle.textContent = `🏆 ${this.level.name} Top`;
+    if (this.dom.menuBoardTitle) this.dom.menuBoardTitle.innerHTML = iconSvg('trophy', { size: 15, cls: 'title-ic' }) + `<span>${this.level.name} Top</span>`;
     // render whatever we have cached immediately, then refresh from the server
     this._renderMenuBoard();
     fetchScores(this.levelId).then((s) => { this._lbScores = s; this._renderMenuBoard(); if (this.state === 'gameover') this._renderGoBoard(); });
@@ -448,7 +474,7 @@ class Game {
     this._myId = entry.id;
     this._lbScores = list;
     this.dom.submitScoreBtn.disabled = true;
-    this.dom.submitScoreBtn.textContent = 'SUBMITTED ✓';
+    this.dom.submitScoreBtn.innerHTML = `<span>SUBMITTED</span>` + iconSvg('check', { size: 15, cls: 'btn-ic' });
     this.dom.nameInput.blur();
     this._renderGoBoard();
     this._renderMenuBoard();
@@ -487,16 +513,18 @@ class Game {
     this.pitch = 0;
     this.roll = 0;
     this._camLookAt = null;
-    this.timeScale = 1; this.targetTimeScale = 1; this.btActive = false;
-    this.superTimer = 0; this.superSpin = 0; this.superStack = 0; this.fireMode = false;
+    this.timeScale = 1; this.targetTimeScale = 1; this.btActive = false; this.btPoop = null;
+    this.superTimer = 0; this.superSpin = 0; this.superStack = 0; this.weaponMode = 'normal';
+    this.pickerOpen = false; this.dom.weaponPicker.classList.add('hidden');
     this.superAura.group.visible = false;
     this.fireAura.group.visible = false;
-    this.dom.poopBtn.classList.remove('super', 'fire');
+    this.dom.poopBtn.classList.remove('super', 'fire', 'scatter', 'machinegun');
     this.dom.superBadge.classList.add('hidden');
     this.dom.superBadge.classList.remove('fire');
     this._setBullseyeReady(false);
     this.dom.turdCam.classList.add('hidden');
-    if (this.poop) { this.scene.remove(this.poop.group); this.poop = null; }
+    for (const p of this.poops) this.scene.remove(p.group);
+    this.poops = [];
     this.effects.clearDecals();
     this.targets.reset(this.pos, this.level);
     this.input.setEnabled(true);
@@ -526,7 +554,8 @@ class Game {
     this.dom.goBest.textContent = this.best;
     this.dom.goBullseyes.textContent = this.bullseyes;
     this.dom.goBlurb.textContent = this._blurb();
-    this.dom.goTitle.textContent = this.score === this.best && this.score > 0 ? 'NEW BEST! 🏆' : "TIME'S UP!";
+    if (this.score === this.best && this.score > 0) this.dom.goTitle.innerHTML = `<span>NEW BEST!</span>` + iconSvg('trophy', { size: 30, cls: 'title-ic' });
+    else this.dom.goTitle.textContent = "TIME'S UP!";
 
     // leaderboard: show where this run lands, ready to submit
     this._goScore = this.score;
@@ -544,15 +573,15 @@ class Game {
 
   _blurb() {
     if (this.score === 0) return 'A clean record. Disappointing.';
-    if (this.bullseyes >= 5) return 'Sniper of the skies. 🎯';
+    if (this.bullseyes >= 5) return 'Sniper of the skies.';
     const big = this.hits >= 20, mid = this.hits >= 10;
     if (this.levelId === 'wedding') {
-      if (big) return 'You absolutely ruined their special day. 💍';
+      if (big) return 'You absolutely ruined their special day.';
       if (mid) return 'Objection! Sustained, all over the guests.';
       return 'A few guests will need dry cleaning.';
     }
     if (this.levelId === 'concert') {
-      if (big) return 'The whole pit got mosh-splatted. 🤘';
+      if (big) return 'The whole pit got mosh-splatted.';
       if (mid) return 'Encore! The crowd is drenched.';
       return 'A solid set of splats.';
     }
@@ -566,8 +595,9 @@ class Game {
   // longer flings it harder or further) — it always lands the same distance
   // ahead for a given altitude, so aiming is about strafing under the target and
   // releasing on the beat, not about charging range.
-  _launchVel() {
-    const fwd = new THREE.Vector3(Math.sin(this.yaw), 0, Math.cos(this.yaw));
+  _launchVel(yawOffset = 0) {
+    const yaw = this.yaw + yawOffset;
+    const fwd = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
     // Circuit levels throw shorter+steeper so the drop lands just ahead of the
     // bird as it passes over the packed crowd; the beach keeps its long lob.
     const fwdSpeed = this.levelMode === 'circuit' ? CIRCUIT_THROW : (BIRD_SPEED + FIRE_POWER * POWER_SPEED);
@@ -618,14 +648,20 @@ class Game {
     return this.superStack > 0 ? 1 + 0.5 * this.superStack : 1;
   }
 
-  firePoop(power) {
+  // Fire a single turd. `opts`:
+  //   bt        — eligible for bullet time (normal/fire single shots only)
+  //   yawOffset — fan the launch sideways (scatter spread)
+  //   sizeMul   — shrink the turd (scatter pellets)
+  //   silent    — skip the per-shot whoosh (volleys/auto-fire play one cue)
+  firePoop(power, opts = {}) {
+    const { bt = false, yawOffset = 0, sizeMul = 1, silent = false } = opts;
     const p0 = this.pos.clone().add(new THREE.Vector3(0, -0.8, 0));
-    const v0 = this._launchVel();
-    const fire = this.fireMode;
+    const v0 = this._launchVel(yawOffset);
+    const fire = this.weaponMode === 'fire';
     const group = fire ? buildFireball() : buildPoop();
-    const turdScale = this._turdScale(power);
-    const catchR = this._turdCatch(power);
-    const blast = this._turdBlast(power);
+    const turdScale = this._turdScale(power) * sizeMul;
+    const catchR = this._turdCatch(power) * sizeMul;
+    const blast = this._turdBlast(power) * sizeMul;
     group.scale.setScalar(turdScale);
     group.position.copy(p0);
     this.scene.add(group);
@@ -636,9 +672,8 @@ class Game {
     // figure finishes squaring up to the turd right as it arrives.
     const tFall = Math.max(0.001, this._timeToHeight(p0.y, v0.y, 0) || 1);
     const seq = this._turdSeq = (this._turdSeq || 0) + 1;
-    // Only a MAX-POWER drop is eligible for bullet time. Find the target (if any)
-    // it's heading close to, and when it reaches that target's height.
-    const maxShot = power >= MAX_CHARGE_BT;
+    // Only a MAX-POWER, bullet-time-eligible drop hunts for a slow-mo target.
+    const maxShot = bt && power >= MAX_CHARGE_BT;
     let btTarget = null, tImpact = Infinity;
     if (maxShot) {
       for (const tg of this.targets.targets) {
@@ -652,10 +687,10 @@ class Game {
         }
       }
     }
-    this.poop = { group, p0: p0.clone(), v0: v0.clone(), t: 0, pos: p0.clone(), vel: v0.clone(), prevY: p0.y, landing, btTarget, tImpact, tFall, seq, maxShot, power, turdScale, catch: catchR, blast, fire, spin: 0 };
-    this.input.setEnabled(false);
+    const p = { group, p0: p0.clone(), v0: v0.clone(), t: 0, pos: p0.clone(), vel: v0.clone(), prevY: p0.y, landing, btTarget, tImpact, tFall, seq, maxShot, power, turdScale, catch: catchR, blast, fire, bt, spin: 0 };
+    this.poops.push(p);
     this.audio.poop();
-    this.audio.whoosh();
+    if (!silent) this.audio.whoosh();
     // Carry the aim slow-mo straight into the drop when a maxed shot is on target;
     // otherwise time snaps back to normal for the fall (no bullet time when the
     // turd isn't close to anyone).
@@ -663,15 +698,25 @@ class Game {
       this.btActive = true;
       this.targetTimeScale = 0.16;
       this.btTarget = btTarget;
+      this.btPoop = p;
       this.audio.slowmo();
+    }
+    return p;
+  }
+
+  // Contra-style spread: one volley of pellets fanned across the lane. Single
+  // tap or a charged hold both work — charge just makes bigger pellets.
+  _fireScatter(power) {
+    for (let i = 0; i < SCATTER_COUNT; i++) {
+      const f = SCATTER_COUNT === 1 ? 0 : (i / (SCATTER_COUNT - 1) - 0.5);
+      this.firePoop(power, { bt: false, yawOffset: f * SCATTER_SPREAD, sizeMul: SCATTER_SIZE, silent: i > 0 });
     }
   }
 
   // Resolve a landed drop. `hits` is the list of targets caught in the splash
   // (empty = a clean miss); each entry is { tg, acc }. A big charged / super
   // turd packs the list with neighbours, so one drop can rack up a huge combo.
-  resolveDrop(hits, primary, impact) {
-    const p = this.poop;
+  resolveDrop(p, hits, primary, impact) {
     const where = impact || p.pos;
     const bestAcc = hits.length ? Math.max(...hits.map((h) => h.acc)) : 0;
     const big = bestAcc >= BULLSEYE_ACC;
@@ -717,23 +762,29 @@ class Game {
 
       // bombing the rare golden super turd activates / stacks SUPER TURD MODE
       if (superHit) this._hitSuperTurd();
-    } else {
+    } else if (p.bt) {
+      // only an aimed single shot counts as a "miss" — spray volleys (scatter /
+      // machine gun) don't reset the combo or spam the toast on every stray pellet
       this.combo = 0;
       this.dom.comboPill.classList.remove('show');
       this.audio.miss();
-      this._showToast('missed!', true);
+      this._showToast('missed!', null, true);
     }
 
-    // brief slow-mo hold so the splat reads, then restore
-    this.btImpact = where.clone();
-    this.poop = null;
-    this.btHold = this.btActive ? 0.5 : 0;
-    // ...but never hand control back mid-transformation (the super cinematic owns it)
-    if (this.btHold <= 0 && this.superSpin <= 0) {
-      // no slow-mo (e.g. a clean miss): reset immediately
-      this.targetTimeScale = 1;
-      this.btImpact = null;
-      if (this.state === 'playing') this.input.setEnabled(true);
+    // drop this turd from the flight list
+    const idx = this.poops.indexOf(p);
+    if (idx >= 0) this.poops.splice(idx, 1);
+
+    // bullet-time framing belongs to the one tracked turd; spray pellets just splat
+    if (p === this.btPoop || (!this.btPoop && this.btActive)) {
+      this.btImpact = where.clone();
+      this.btPoop = null;
+      this.btHold = this.btActive ? 0.5 : 0;
+      // ...but never hand control back mid-transformation (the cinematic/menu own it)
+      if (this.btHold <= 0 && this.superSpin <= 0 && !this.pickerOpen) {
+        this.targetTimeScale = 1;
+        this.btImpact = null;
+      }
     }
   }
 
@@ -747,7 +798,7 @@ class Game {
       this.superTimer = SUPER_TIME;
       this.superSpin = SUPER_SPIN_TIME;
       // clean-cut into the transformation: drop any bullet-time framing
-      this.btActive = false; this.btHold = 0; this.btImpact = null;
+      this.btActive = false; this.btHold = 0; this.btImpact = null; this.btPoop = null;
       this.targetTimeScale = 1;
       this.input.setEnabled(false);
       this.superAura.group.visible = true;
@@ -756,32 +807,71 @@ class Game {
       this.dom.superBadge.classList.remove('hidden');
       this.audio.seagullYell();
       this.audio.superZap();
-      this._showToast('SUPER TURD MODE! ⚡');
+      this._showToast('SUPER TURD MODE!', 'bolt');
     } else {
       // stack: more time, bigger turds, a louder celebration
       this.superTimer += SUPER_STACK_TIME;
       this.audio.superStack();
       this.audio.seagullYell();
-      this._showToast(`SUPER TURD ×${this.superStack}! ⚡`);
+      this._showToast(`SUPER TURD ×${this.superStack}!`, 'bolt');
     }
 
-    // three stacked super turds => TURD FIRE: the bird ignites, turds become
-    // streaking lava comets.
-    if (!this.fireMode && this.superStack >= FIRE_STACK) {
-      this.fireMode = true;
+    // three stacked super turds => pick a tier-3 weapon from a slow-mo menu
+    // (Fire / Scatter / Machine Gun). Only offered once per super window.
+    if (this.weaponMode === 'normal' && !this.pickerOpen && this.superStack >= FIRE_STACK) {
+      this._openWeaponPicker();
+    }
+    this._updateSuperBadge();
+  }
+
+  // Freeze the action (near-stop slow-mo) and present the weapon picker.
+  _openWeaponPicker() {
+    this.pickerOpen = true;
+    this.btActive = false; this.btHold = 0; this.btImpact = null; this.btPoop = null;
+    this.targetTimeScale = PICKER_SCALE;
+    this.input.setEnabled(false);
+    this.dom.weaponPicker.classList.remove('hidden');
+    this.audio.superZap();
+  }
+
+  // Lock in a tier-3 weapon, bank the bonus time, and resume at full speed.
+  _chooseWeapon(mode) {
+    if (!this.pickerOpen) return;
+    this.pickerOpen = false;
+    this.dom.weaponPicker.classList.add('hidden');
+    this.weaponMode = mode;
+    this.superTimer += MODE_BONUS_TIME;
+    this._mgCooldown = 0;
+
+    this.dom.poopBtn.classList.remove('super', 'fire', 'scatter', 'machinegun');
+    this.dom.superBadge.classList.remove('fire');
+    if (mode === 'fire') {
       this.superAura.group.visible = false;
       this.fireAura.group.visible = true;
       this.dom.poopBtn.classList.add('fire');
       this.dom.superBadge.classList.add('fire');
       this.audio.fireRoar();
-      this._showToast('🔥 TURD FIRE!! 🔥');
+    } else {
+      this.superAura.group.visible = true;
+      this.fireAura.group.visible = false;
+      this.dom.poopBtn.classList.add('super', mode === 'machinegun' ? 'machinegun' : 'scatter');
+      this.audio.superStack();
     }
+    this.audio.seagullYell();
+    const label = mode === 'fire' ? 'TURD FIRE' : mode === 'scatter' ? 'SCATTER TURDS' : 'MACHINE GUN';
+    this._showToast(`${label}!`, MODE_ICON[mode]);
+
+    // resume play
+    this.targetTimeScale = 1;
+    this.input.setEnabled(true);
     this._updateSuperBadge();
   }
 
   _updateSuperBadge() {
-    this.dom.superBolt.textContent = this.fireMode ? '🔥' : '⚡';
-    this.dom.superLabel.textContent = this.fireMode ? 'TURD FIRE' : 'SUPER TURD';
+    const m = this.weaponMode;
+    const label = m === 'fire' ? 'TURD FIRE' : m === 'scatter' ? 'SCATTER' : m === 'machinegun' ? 'MACHINE GUN' : 'SUPER TURD';
+    this.dom.superBolt.innerHTML = iconSvg(m === 'normal' ? 'bolt' : MODE_ICON[m], { size: 16, cls: 'badge-ic' });
+    this.dom.superLabel.textContent = label;
     this.dom.superMult.textContent = '×' + this._superScoreMult().toFixed(1);
     this.dom.superTime.textContent = Math.ceil(this.superTimer);
   }
@@ -789,17 +879,18 @@ class Game {
   _endSuper() {
     this.superTimer = 0;
     this.superStack = 0;
-    this.fireMode = false;
+    this.weaponMode = 'normal';
     this.superAura.group.visible = false;
     this.fireAura.group.visible = false;
-    this.dom.poopBtn.classList.remove('super', 'fire');
+    this.dom.poopBtn.classList.remove('super', 'fire', 'scatter', 'machinegun');
     this.dom.superBadge.classList.add('hidden');
     this.dom.superBadge.classList.remove('fire');
   }
 
-  _showToast(text, miss = false) {
+  _showToast(text, icon = null, miss = false) {
     const t = this.dom.toast;
-    t.textContent = text;
+    const glyph = icon ? iconSvg(icon, { size: 38, cls: 'toast-ic' }) : '';
+    t.innerHTML = glyph + `<span>${text}</span>`;
     t.style.color = miss ? '#cfe8ff' : '#fff';
     t.classList.remove('hidden', 'pop');
     void t.offsetWidth; // reflow to restart animation
@@ -875,25 +966,27 @@ class Game {
     const cinematic = this.superSpin > 0;
     if (cinematic) {
       this.superSpin -= dtReal;
-      if (this.superSpin <= 0 && this.state === 'playing') this.input.setEnabled(true);
+      if (this.superSpin <= 0 && this.state === 'playing' && !this.pickerOpen) this.input.setEnabled(true);
     }
+    // steering + firing are also frozen while the weapon picker is up
+    const locked = cinematic || this.pickerOpen;
 
     // ---- flight ----
     if (this.levelMode === 'circuit') {
       // Circuit venues fly themselves back and forth; the player only steers
       // altitude (and when/how-big to drop).
-      this._circuitFlight(dt, dtReal, cinematic);
+      this._circuitFlight(dt, dtReal, locked);
     } else {
       // Infinite runner: heading locked forward down the lane; steering
       // strafes across a fixed corridor and dives/climbs, never turning around.
       this.yaw = FORWARD_YAW;
-      const strafe = cinematic ? 0 : this.input.steerX;
+      const strafe = locked ? 0 : this.input.steerX;
       this.pos.x = THREE.MathUtils.clamp(
         this.pos.x + strafe * STRAFE_SPEED * dt, -COURSE_HALF, COURSE_HALF,
       );
 
       // pitch toward steer target; roll banks visually into the strafe
-      const targetPitch = cinematic ? 0 : this.input.steerY * 0.5;
+      const targetPitch = locked ? 0 : this.input.steerY * 0.5;
       this.pitch += (targetPitch - this.pitch) * Math.min(1, dt * 5);
       this.roll += (-strafe * 0.6 - this.roll) * Math.min(1, dtReal * 6);
 
@@ -908,18 +1001,19 @@ class Game {
     this.birdModel.flap(this.clock.elapsedTime * (this.timeScale * 0.5 + 0.5), flapInt);
 
     // ---- SUPER TURD MODE ----
-    // The giant-turd window counts down once the transformation is over.
-    if (this.superTimer > 0 && !cinematic) {
+    // The giant-turd window counts down once the transformation is over (and is
+    // paused while the weapon picker is open).
+    if (this.superTimer > 0 && !cinematic && !this.pickerOpen) {
       this.superTimer -= dtReal;
       if (this.superTimer <= 0) this._endSuper();
       else this.dom.superTime.textContent = Math.ceil(this.superTimer);
     }
-    if (this.fireMode) this.fireAura.update(dtReal, 1);
+    if (this.weaponMode === 'fire') this.fireAura.update(dtReal, 1);
     else if (this.superAura.group.visible) this.superAura.update(dtReal, cinematic ? 1 : 0.6);
 
     // ---- targets ---- (pass the live drop so every figure can swivel to face
     // the falling turd, timed to finish squaring up just as it arrives)
-    const p = this.poop;
+    const p = this.btPoop || this.poops[0];
     // x/z = the turd's live position (crowd turns to face it); lx/lz/r = the
     // predicted splat (who's about to get hit → shocked faces).
     const drop = p ? { x: p.pos.x, z: p.pos.z, lx: p.landing.x, lz: p.landing.z, r: p.blast + p.catch, t: p.t, tFall: p.tFall, id: p.seq } : null;
@@ -927,26 +1021,45 @@ class Game {
 
     // ---- wall of death (concert) ---- announce the call and the collision
     const wod = this.targets.consumeWodEvent && this.targets.consumeWodEvent();
-    if (wod === 'call') { this._showToast('WALL OF DEATH! 🤘'); this.audio.seagullYell(); }
-    else if (wod === 'clash') { this._showToast('💥 CRUNCH! 💥'); this.audio.fireRoar(); }
+    if (wod === 'call') { this._showToast('WALL OF DEATH!', 'skull'); this.audio.seagullYell(); }
+    else if (wod === 'clash') { this._showToast('CRUNCH!', 'burst'); this.audio.fireRoar(); }
 
-    // ---- fire poop? ---- (locked out during the transformation cinematic)
-    const fired = cinematic ? null : this.input.consumeFire();
-    if (fired !== null && !this.poop) this.firePoop(fired);
+    // ---- fire poop? ---- (locked out during the cinematic / weapon picker)
+    const machineGun = this.weaponMode === 'machinegun';
+    if (!locked) {
+      if (machineGun) {
+        // hold to rapid-fire ~3/sec; no charge, no bullet time, release to stop
+        if (this.input.charging) {
+          this._mgCooldown -= dtReal;
+          if (this._mgCooldown <= 0) { this.firePoop(MG_POWER, { bt: false, silent: true }); this._mgCooldown = 1 / MG_RATE; }
+        } else {
+          this._mgCooldown = 0;
+        }
+        this.input.consumeFire(); // swallow the release so it can't double-fire
+      } else {
+        const fired = this.input.consumeFire();
+        if (fired !== null && !this.poops.length) {
+          if (this.weaponMode === 'scatter') this._fireScatter(fired);
+          else this.firePoop(fired, { bt: true });
+        }
+      }
+    }
 
     // ---- AIM BULLET TIME ----
-    // Holding a turd to full charge slows time so you can line up the shot. It
-    // engages only while charging at max with no turd already falling; otherwise
-    // (and when not in a drop bullet-time) time runs normally.
-    const aimBT = !cinematic && !this.poop && this.input.charging && this.input.charge >= MAX_CHARGE_BT;
-    if (aimBT) {
+    // Holding a turd to full charge slows time so you can line up the shot —
+    // precision modes only (normal / fire), and never while turds are falling.
+    const canAimBT = this.weaponMode === 'normal' || this.weaponMode === 'fire';
+    const aimBT = !locked && canAimBT && !this.poops.length && this.input.charging && this.input.charge >= MAX_CHARGE_BT;
+    if (this.pickerOpen) {
+      this.targetTimeScale = PICKER_SCALE;
+    } else if (aimBT) {
       this.targetTimeScale = AIM_TIME_SCALE;
     } else if (!this.btActive && this.btHold <= 0 && !cinematic) {
       this.targetTimeScale = 1;
     }
 
-    // charge audio
-    if (this.input.charging && !cinematic) {
+    // charge audio (machine gun and the picker don't charge)
+    if (this.input.charging && !locked && !machineGun) {
       this.audio.startCharge();
       this.audio.setCharge(this.input.charge);
     } else {
@@ -954,15 +1067,16 @@ class Game {
     }
     // charge ring
     const C = 339.3;
-    this.dom.chargeFg.style.strokeDashoffset = C * (1 - this.input.charge);
-    this.dom.chargeFg.style.stroke = this.input.charge > 0.8 ? '#ff2e4d' : (this.input.charge > 0.4 ? '#ff9f1c' : '#ff4d6d');
+    const ringCharge = machineGun ? 0 : this.input.charge;
+    this.dom.chargeFg.style.strokeDashoffset = C * (1 - ringCharge);
+    this.dom.chargeFg.style.stroke = ringCharge > 0.8 ? '#ff2e4d' : (ringCharge > 0.4 ? '#ff9f1c' : '#ff4d6d');
 
     // ---- reticle (predicted landing) ----
-    if (cinematic) { this.reticle.visible = false; this._setBullseyeReady(false); }
+    if (locked || machineGun || this.poops.length) { this.reticle.visible = false; this._setBullseyeReady(false); }
     else this._updateReticle();
 
     // ---- poop physics ----
-    if (this.poop) this._updatePoop(dt);
+    this._updatePoops(dt);
 
     // ---- bullet-time hold after impact ----
     if (this.btHold > 0) {
@@ -1004,8 +1118,13 @@ class Game {
     const c = this.level.circuit;
     const half = c.halfWidth || 12;
     const strafe = cinematic ? 0 : this.input.steerX;
-    // strafe across the venue + dive ride on top of the auto forward/loop motion
-    this.pos.x = THREE.MathUtils.clamp(this.pos.x + strafe * STRAFE_SPEED * dt, -half, half);
+    // Map "drag right" to the bird's on-screen right, not a fixed world axis.
+    // The circuit doubles back, so on the return leg the camera faces the other
+    // way — without this the lateral steering inverts coming back. The camera's
+    // right vector has world-x component -cos(yaw) (±1 on the straights), which
+    // also eases lateral authority to zero mid-turn as the bird points sideways.
+    const dirX = -Math.cos(this.yaw);
+    this.pos.x = THREE.MathUtils.clamp(this.pos.x + strafe * dirX * STRAFE_SPEED * dt, -half, half);
     const targetPitch = cinematic ? 0 : this.input.steerY * 0.5;
     this.pitch += (targetPitch - this.pitch) * Math.min(1, dt * 5);
 
@@ -1078,7 +1197,7 @@ class Game {
   }
 
   _updateReticle() {
-    if (this.poop) { this.reticle.visible = false; this._setBullseyeReady(false); return; }
+    if (this.poops.length) { this.reticle.visible = false; this._setBullseyeReady(false); return; }
     // The landing spot is fixed ahead (the throw doesn't change with charge), so
     // the reticle just shows where a drop lands right now.
     const p0 = this.pos.clone().add(new THREE.Vector3(0, -0.8, 0));
@@ -1134,8 +1253,15 @@ class Game {
     if (on) this.audio.lock();
   }
 
-  _updatePoop(dt) {
-    const p = this.poop;
+  _updatePoops(dt) {
+    // iterate a copy-safe index walk since resolveDrop splices the flight list
+    for (let i = this.poops.length - 1; i >= 0; i--) {
+      const p = this.poops[i];
+      if (p) this._updatePoop(p, dt);
+    }
+  }
+
+  _updatePoop(p, dt) {
     p.prevY = p.pos.y;
     p.t += dt;
     const t = p.t;
@@ -1186,7 +1312,7 @@ class Game {
         }));
         const impact = prim.group.position.clone(); impact.y = prim.hitY;
         p.pos.copy(impact);
-        this.resolveDrop(hits, prim, impact);
+        this.resolveDrop(p, hits, prim, impact);
         return;
       }
     }
@@ -1194,13 +1320,13 @@ class Game {
     // hit the ground => miss
     if (p.pos.y <= 0.15) {
       p.pos.y = 0.12;
-      this.resolveDrop([], null, p.pos.clone());
+      this.resolveDrop(p, [], null, p.pos.clone());
     }
   }
 
   _chaseCamera(dt, bulletTime) {
     let desired, lookAt;
-    if (bulletTime && (this.poop || this.btImpact)) {
+    if (bulletTime && (this.btPoop || this.btImpact)) {
       // TURD CAM: lock the framing onto the falling turd itself and chase it down
       // so we never lose it on the way to the target. We look at the poo (biased
       // a touch toward the target so the impact sits in the lower frame) from a
@@ -1208,11 +1334,11 @@ class Game {
       const tg = this.btTarget;
       const focus = tg && tg.group ? tg.group.position.clone().setY(tg.hitY)
         : (this.btImpact ? this.btImpact.clone() : new THREE.Vector3());
-      const poopPos = this.poop ? this.poop.pos.clone()
+      const poopPos = this.btPoop ? this.btPoop.pos.clone()
         : (this.btImpact ? this.btImpact.clone() : focus.clone());
       const span = Math.max(2, poopPos.y - focus.y);
       // frame on the poo, nudged toward the target so both stay in shot
-      const lookT = this.poop ? poopPos.clone().lerp(focus, 0.3) : focus.clone();
+      const lookT = this.btPoop ? poopPos.clone().lerp(focus, 0.3) : focus.clone();
       const side = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
       const back = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
       const dir = side.multiplyScalar(1.0).add(back.multiplyScalar(0.18)).normalize();

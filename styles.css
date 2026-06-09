@@ -34,6 +34,22 @@ html, body {
 
 .hidden { display: none !important; }
 
+/* ---------- Inline icons (Material-Symbols-style SVGs; see src/icons.js) ----
+   Outline glyphs inherit fill:none + currentColor stroke from the <svg>; solid
+   glyphs carry their own inline fill="currentColor"/stroke="none", which wins
+   over the inherited value, so both styles tint via `color`. */
+.ic {
+  display: inline-block;
+  vertical-align: middle;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.title-ic { margin-bottom: 1px; }
+.btn-ic { margin: 0 2px; }
+
 /* ---------- Overlays (menus) ---------- */
 .overlay {
   position: fixed;
@@ -140,8 +156,12 @@ html, body {
   text-transform: uppercase;
   color: #5a6b7a;
   margin-bottom: 8px;
-  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
 }
+.board-title .title-ic { color: #e8a72b; }
 .board-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
 .board-list li {
   display: grid;
@@ -180,6 +200,10 @@ html, body {
 #nameInput:focus { border-color: #ff9f1c; }
 .mini-btn {
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   padding: 10px 16px;
   font-size: 14px;
   font-weight: 900;
@@ -215,7 +239,8 @@ html, body {
   cursor: pointer;
   transition: transform .08s, border-color .12s, background .12s, box-shadow .12s;
 }
-.level-chip .lc-emoji { font-size: 26px; line-height: 1; }
+.level-chip .lc-emoji { display: flex; align-items: center; justify-content: center; height: 28px; color: #ff8a3a; }
+.level-chip.selected .lc-emoji { color: #e8820e; }
 .level-chip .lc-name {
   font-size: 12px;
   font-weight: 900;
@@ -242,7 +267,7 @@ html, body {
 }
 .howrow { display: flex; align-items: center; gap: 12px; font-size: 14.5px; line-height: 1.3; color: #3a4a58; }
 .howrow b { color: var(--ink); }
-.howicon { font-size: 22px; width: 28px; text-align: center; flex: none; }
+.howicon { width: 28px; flex: none; display: flex; align-items: center; justify-content: center; color: #ff7a3a; }
 
 .big-btn {
   width: 100%;
@@ -264,6 +289,10 @@ html, body {
 
 .ghost-btn {
   width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   margin-top: 10px;
   padding: 12px;
   font-size: 14px;
@@ -332,6 +361,9 @@ html, body {
   top: 34%;
   left: 50%;
   transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: clamp(34px, 11vw, 60px);
   font-weight: 900;
   color: #fff;
@@ -340,6 +372,7 @@ html, body {
   white-space: nowrap;
   letter-spacing: -1px;
 }
+.toast-ic { filter: drop-shadow(0 2px 0 rgba(0,0,0,.25)); flex: none; }
 #hitToast.pop { animation: toastpop .9s ease-out forwards; }
 @keyframes toastpop {
   0% { transform: translateX(-50%) scale(.4) rotate(-8deg); opacity: 0; }
@@ -462,10 +495,22 @@ html, body {
   background: radial-gradient(circle at 38% 32%, #fff3d6, #ff8a1e 45%, #e01b00);
   box-shadow: 0 6px 0 #7a1500, 0 0 0 4px rgba(255,90,0,.6), 0 0 34px rgba(255,90,0,.95);
 }
+/* SCATTER — teal */
+#poopBtn.scatter {
+  background: radial-gradient(circle at 38% 32%, #e8fffb, #7ef0e6 52%, #14b3a6);
+  box-shadow: 0 6px 0 #0c8a80, 0 0 0 4px rgba(26,200,184,.6), 0 0 30px rgba(26,200,184,.9);
+}
+/* MACHINE GUN — violet */
+#poopBtn.machinegun {
+  background: radial-gradient(circle at 38% 32%, #f1ecff, #b9a3ff 52%, #7a45ff);
+  box-shadow: 0 6px 0 #5328b0, 0 0 0 4px rgba(150,110,255,.6), 0 0 30px rgba(150,110,255,.9);
+}
 #poopBtn.disabled { filter: grayscale(.7) brightness(.9); opacity: .55; }
 #poopBtn:active { transform: scale(.96); }
 
-.poop-emoji { font-size: 52px; filter: drop-shadow(0 2px 1px rgba(0,0,0,.25)); pointer-events: none; }
+.poop-emoji { display: grid; place-items: center; color: var(--poop); filter: drop-shadow(0 2px 1px rgba(0,0,0,.25)); pointer-events: none; }
+.poop-emoji .ic { width: 52px; height: 52px; }
+#poopBtn.fire .poop-emoji, #poopBtn.scatter .poop-emoji, #poopBtn.machinegun .poop-emoji { color: #3a210f; }
 #poopBtn.charging .poop-emoji { animation: wiggle .25s infinite; }
 @keyframes wiggle { 0%,100%{ transform: rotate(-7deg) scale(1.05);} 50%{ transform: rotate(7deg) scale(1.12);} }
 
@@ -483,5 +528,58 @@ html, body {
 
 @media (max-width: 380px) {
   #poopBtn { width: 100px; height: 100px; }
-  .poop-emoji { font-size: 44px; }
+  .poop-emoji .ic { width: 44px; height: 44px; }
+  .wp-btn { width: 84px; height: 98px; }
 }
+
+/* ---------- Tier-3 weapon picker (slow-mo menu) ---------- */
+#weaponPicker {
+  position: absolute;
+  inset: 0;
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 20px;
+  background: rgba(8,16,26,.5);
+  backdrop-filter: blur(2px);
+  pointer-events: auto;
+  animation: wpFade .18s ease;
+}
+@keyframes wpFade { from { opacity: 0; } to { opacity: 1; } }
+.wp-title {
+  color: #fff;
+  font-weight: 900;
+  font-size: 18px;
+  letter-spacing: 2px;
+  text-shadow: 0 2px 10px rgba(0,0,0,.6);
+}
+.wp-sub { color: #ffe39a; font-weight: 800; font-size: 13px; letter-spacing: 1px; text-shadow: 0 1px 4px rgba(0,0,0,.5); }
+.wp-row { display: flex; gap: 12px; }
+.wp-btn {
+  width: 100px;
+  height: 112px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: rgba(255,255,255,.96);
+  border: 3px solid #fff;
+  border-radius: 20px;
+  color: #2a2a3a;
+  cursor: pointer;
+  box-shadow: 0 8px 0 rgba(0,0,0,.22), 0 12px 26px rgba(0,0,0,.4);
+  transition: transform .08s;
+  animation: wpPop .22s cubic-bezier(.2,1.3,.5,1) both;
+}
+.wp-btn:nth-child(2) { animation-delay: .04s; }
+.wp-btn:nth-child(3) { animation-delay: .08s; }
+@keyframes wpPop { from { transform: translateY(10px) scale(.85); opacity: 0; } to { transform: none; opacity: 1; } }
+.wp-btn:active { transform: translateY(4px) scale(.96); box-shadow: 0 3px 0 rgba(0,0,0,.22); }
+.wp-name { font-size: 12px; font-weight: 900; letter-spacing: .5px; }
+.wp-btn[data-mode="fire"] .wp-ic { color: #ff5a2c; }
+.wp-btn[data-mode="scatter"] .wp-ic { color: #14b3a6; }
+.wp-btn[data-mode="machinegun"] .wp-ic { color: #7a45ff; }

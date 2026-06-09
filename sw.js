@@ -25,6 +25,7 @@ const ASSETS = [
   './favicon-48.png',
   './vendor/three.module.js',
   './src/main.js',
+  './src/icons.js',
   './src/world.js',
   './src/models.js',
   './src/levels.js',
