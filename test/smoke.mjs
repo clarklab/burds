@@ -99,7 +99,7 @@ const hit = await page.evaluate(async () => {
   const g = window.game;
   // put the bird in a known, level state for a repeatable shot
   g.pos.set(0, 36, 60); g.yaw = Math.PI; g.pitch = 0; g.roll = 0;
-  if (g.poop) { g.scene.remove(g.poop.group); g.poop = null; }
+  for (const pp of g.poops) g.scene.remove(pp.group); g.poops = [];
   g.btActive = false; g.btHold = 0; g.targetTimeScale = 1;
   const p0 = g.pos.clone(); p0.y -= 0.8;
   const v0 = g._launchVel(0);
@@ -110,14 +110,11 @@ const hit = await page.evaluate(async () => {
   if (tg.bullseye) tg.bullseye.visible = true;
   g._dbg = { land: [land.x.toFixed(1), land.z.toFixed(1)], tgType: tg.key, radius: tg.radius };
   const scoreBefore = g.score;
-  g.firePoop(0);
+  g.firePoop(0, { bt: true });
   // poll for bullet time + resolution
   let btSeen = false;
   for (let i = 0; i < 240; i++) {
     if (g.btActive) btSeen = true;
-    if (g.score > scoreBefore || (!g.poop && g.btHold <= 0 && i > 4)) {
-      // wait a touch more to ensure resolve ran
-    }
     if (g.score > scoreBefore) break;
     await new Promise((r) => setTimeout(r, 25));
   }
@@ -136,7 +133,7 @@ const sup = await page.evaluate(async () => {
   const g = window.game;
   g._endSuper(); // reset any super state leaked from earlier (e.g. a random super turd)
   g.pos.set(0, 36, 60); g.yaw = Math.PI; g.pitch = 0; g.roll = 0;
-  if (g.poop) { g.scene.remove(g.poop.group); g.poop = null; }
+  for (const pp of g.poops) g.scene.remove(pp.group); g.poops = [];
   g.btActive = false; g.btHold = 0; g.btImpact = null; g.targetTimeScale = 1;
   g.superTimer = 0; g.superSpin = 0;
   const p0 = g.pos.clone(); p0.y -= 0.8;
@@ -168,20 +165,31 @@ const sup = await page.evaluate(async () => {
   out.timerAfterStack = +g.superTimer.toFixed(2); // should be > t1 (time added)
   out.stack2 = g.superStack; out.mult2 = g._superScoreMult();
   out.scaleStack2 = +g._turdScale(1).toFixed(2);  // bigger than scaleSuper
-  g._hitSuperTurd();                       // stack 3 => TURD FIRE
+  g._hitSuperTurd();                       // stack 3 => opens the weapon picker
   out.stack3 = g.superStack;
-  out.fireMode = g.fireMode;
+  out.pickerOpen = g.pickerOpen;
+  out.pickerVisible = !document.getElementById('weaponPicker').classList.contains('hidden');
+  // choose FIRE from the slow-mo menu; banks +20s and lights the bird up
+  const beforeBonus = g.superTimer;
+  g._chooseWeapon('fire');
+  out.weaponMode = g.weaponMode;
   out.fireAura = g.fireAura.group.visible;
   out.badgeFire = document.getElementById('superBadge').classList.contains('fire');
+  out.bonusAdded = g.superTimer > beforeBonus;     // +20s for picking a mode
   out.mult3 = g._superScoreMult();
   // a drop in fire mode should produce a flagged fireball
-  g.firePoop(1);
-  out.poopIsFire = !!(g.poop && g.poop.fire);
+  g.firePoop(1, { bt: true });
+  out.poopIsFire = !!(g.poops[0] && g.poops[0].fire);
   out.timerWasAdded = out.timerAfterStack > t1;
+  // scatter fires a whole volley of pellets at once
+  for (const pp of g.poops) g.scene.remove(pp.group); g.poops = [];
+  g.weaponMode = 'scatter';
+  g._fireScatter(0.5);
+  out.scatterCount = g.poops.length;
   // clean up so the rest of the run starts from a normal state
-  if (g.poop) { g.scene.remove(g.poop.group); g.poop = null; }
+  for (const pp of g.poops) g.scene.remove(pp.group); g.poops = [];
   g._endSuper();
-  g.superSpin = 0; g.btActive = false; g.btHold = 0;
+  g.superSpin = 0; g.btActive = false; g.btHold = 0; g.btPoop = null;
   g.timeScale = 1; g.targetTimeScale = 1;
   g.input.setEnabled(true);
   return out;
@@ -196,8 +204,14 @@ if (!(sup.mult1 === 1.5 && sup.mult2 === 2 && sup.mult3 === 2.5)) {
 if (!(sup.scaleStack2 > sup.scaleSuper && sup.timerWasAdded)) {
   throw new Error('Stacking did not grow turds / add time: ' + JSON.stringify(sup));
 }
-if (!(sup.stack3 === 3 && sup.fireMode && sup.fireAura && sup.badgeFire && sup.poopIsFire)) {
-  throw new Error('TURD FIRE did not ignite at 3 stacks: ' + JSON.stringify(sup));
+if (!(sup.stack3 === 3 && sup.pickerOpen && sup.pickerVisible)) {
+  throw new Error('Weapon picker did not open at 3 stacks: ' + JSON.stringify(sup));
+}
+if (!(sup.weaponMode === 'fire' && sup.fireAura && sup.badgeFire && sup.poopIsFire && sup.bonusAdded)) {
+  throw new Error('Choosing FIRE did not apply fire mode + bonus: ' + JSON.stringify(sup));
+}
+if (sup.scatterCount !== 5) {
+  throw new Error('Scatter did not fire a 5-pellet volley: ' + JSON.stringify(sup));
 }
 
 // --- charging finger can steer: hold the poop button and drag, and steerX
@@ -225,7 +239,7 @@ await page.evaluate(() => { window.game.input.steerX = 0; window.game.input.stee
 await page.evaluate(() => {
   const g = window.game;
   g.pos.set(0, 40, 60); g.yaw = Math.PI; g.pitch = 0; g.roll = 0;
-  if (g.poop) { g.scene.remove(g.poop.group); g.poop = null; }
+  for (const pp of g.poops) g.scene.remove(pp.group); g.poops = [];
   g.btActive = false; g.btHold = 0; g.btImpact = null; g.targetTimeScale = 1;
   const p0 = g.pos.clone(); p0.y -= 0.8;
   const v0 = g._launchVel(0);
@@ -234,12 +248,12 @@ await page.evaluate(() => {
   tg.alive = true; tg.orbit = false;
   tg.group.position.set(land.x, 0, land.z);
   if (tg.bullseye) tg.bullseye.visible = true;
-  g.firePoop(1); // max power — bullet time is now reserved for fully-charged drops
+  g.firePoop(1, { bt: true }); // max power — bullet time is reserved for fully-charged drops
 });
 // poll until bullet time engaged, let camera settle, screenshot while still falling
 let btShot = false;
 for (let i = 0; i < 150; i++) {
-  const st = await page.evaluate(() => ({ bt: window.game.btActive, falling: !!window.game.poop }));
+  const st = await page.evaluate(() => ({ bt: window.game.btActive, falling: window.game.poops.length > 0 }));
   if (st.bt && st.falling) {
     await page.waitForTimeout(160); // camera settle, still descending in slow-mo
     await page.screenshot({ path: join(ROOT, 'test/shot-bullettime.png') });
@@ -253,7 +267,7 @@ await page.waitForTimeout(1500);
 // --- run the clock down to verify game over screen ---
 await page.evaluate(() => {
   const g = window.game;
-  if (g.poop) { g.scene.remove(g.poop.group); g.poop = null; }
+  for (const pp of g.poops) g.scene.remove(pp.group); g.poops = [];
   g.btActive = false; g.btHold = 0; g.btImpact = null; g.targetTimeScale = 1; g.timeScale = 1;
   g.timeLeft = 0.4;
 });
