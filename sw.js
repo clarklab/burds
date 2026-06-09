@@ -9,7 +9,7 @@
  *   activate, takes control, and the page reloads onto the new build.
  *   That's the whole "push changes when the user regains internet" story.
  */
-const CACHE_VERSION = 'v6';
+const CACHE_VERSION = 'v7';
 const CACHE_NAME = `burds-${CACHE_VERSION}`;
 
 // Everything needed to boot and play with zero network.
@@ -18,7 +18,11 @@ const ASSETS = [
   './index.html',
   './styles.css',
   './manifest.webmanifest',
-  './icon.svg',
+  './logo.webp',
+  './icon-192.webp',
+  './icon-512.webp',
+  './apple-touch-icon.png',
+  './favicon-48.png',
   './vendor/three.module.js',
   './src/main.js',
   './src/world.js',
