@@ -1,9 +1,9 @@
 import * as THREE from 'three';
 import { buildWorld, TargetManager, COURSE_HALF } from './world.js';
-import { buildSeagull, buildPoop } from './models.js';
+import { buildSeagull, buildPoop, buildFireball } from './models.js';
 import { Input } from './input.js';
 import { Audio } from './audio.js';
-import { Effects, buildReticle, buildBirdShadow, buildSuperAura } from './effects.js';
+import { Effects, buildReticle, buildBirdShadow, buildSuperAura, buildFireAura } from './effects.js';
 
 // ----- tuning constants -----
 const BIRD_SPEED = 24;       // constant forward flight speed down the lane
@@ -24,9 +24,13 @@ const RET_FIRE = 0.6;        // final firing size when a hit is dialled in
 const BT_LEAD = 0.5;         // sim-seconds before impact to start slow-mo (earlier = more drama)
 
 // ----- SUPER TURD MODE -----
-const SUPER_TIME = 15;       // seconds of giant turds after grabbing a super turd
+const SUPER_TIME = 15;       // seconds of giant turds from the first super turd
+const SUPER_STACK_TIME = 10; // extra seconds each additional (stacked) super turd adds
 const SUPER_SPIN_TIME = 1.8; // length of the camera-orbit transformation cinematic
-const SUPER_TURD_MULT = 2.5; // turd size multiplier while super mode is active
+const SUPER_TURD_MULT = 2.5; // base turd size multiplier while super mode is active
+const SUPER_STACK_SIZE = 0.7;// extra size multiplier added per stack beyond the first
+const TURD_SCALE_MAX = 6.5;  // cap so giant turds don't swallow the whole screen
+const FIRE_STACK = 3;        // stacks needed to ignite TURD FIRE mode
 const TURD_FOOTPRINT = 0.7;  // extra catch radius per unit of turd scale over 1 (bigger turd = easier hit)
 
 // ----- scoring / hit feel -----
@@ -61,9 +65,11 @@ class Game {
     this.birdShadow = buildBirdShadow();
     this.scene.add(this.birdShadow);
 
-    // super-Saiyan aura rides on the bird, hidden until SUPER TURD MODE
+    // super-Saiyan + fire auras ride on the bird, hidden until earned
     this.superAura = buildSuperAura();
     this.bird.add(this.superAura.group);
+    this.fireAura = buildFireAura();
+    this.bird.add(this.fireAura.group);
 
     this.reticle = buildReticle();
     this.scene.add(this.reticle);
@@ -96,6 +102,8 @@ class Game {
     // super turd mode
     this.superTimer = 0;   // seconds of giant-turd mode remaining
     this.superSpin = 0;    // seconds of transformation cinematic remaining
+    this.superStack = 0;   // how many super turds are stacked (0 = inactive)
+    this.fireMode = false; // 3+ stacks => TURD FIRE (flaming-comet turds)
 
     // round
     this.state = 'menu';
@@ -122,6 +130,9 @@ class Game {
       poopBtn: document.getElementById('poopBtn'),
       turdCam: document.getElementById('turdCam'),
       superBadge: document.getElementById('superBadge'),
+      superBolt: document.getElementById('superBolt'),
+      superLabel: document.getElementById('superLabel'),
+      superMult: document.getElementById('superMult'),
       superTime: document.getElementById('superTime'),
       finalScore: document.getElementById('finalScore'),
       goHits: document.getElementById('goHits'),
@@ -168,10 +179,12 @@ class Game {
     this.pitch = 0;
     this.roll = 0;
     this.timeScale = 1; this.targetTimeScale = 1; this.btActive = false;
-    this.superTimer = 0; this.superSpin = 0;
+    this.superTimer = 0; this.superSpin = 0; this.superStack = 0; this.fireMode = false;
     this.superAura.group.visible = false;
-    this.dom.poopBtn.classList.remove('super');
+    this.fireAura.group.visible = false;
+    this.dom.poopBtn.classList.remove('super', 'fire');
     this.dom.superBadge.classList.add('hidden');
+    this.dom.superBadge.classList.remove('fire');
     this._setBullseyeReady(false);
     this.dom.turdCam.classList.add('hidden');
     if (this.poop) { this.scene.remove(this.poop.group); this.poop = null; }
@@ -239,23 +252,33 @@ class Game {
     return (v0y + Math.sqrt(disc)) / g;
   }
 
-  // Turd size for a given hold power. Holding longer makes a bigger turd; SUPER
-  // TURD MODE multiplies it 2.5x on top.
+  // Size multiplier from SUPER TURD MODE — 2.5x base, growing each stacked super
+  // turd, so turds get even bigger the more you grab.
+  _superSizeMult() {
+    if (this.superStack <= 0) return 1;
+    return SUPER_TURD_MULT + (this.superStack - 1) * SUPER_STACK_SIZE;
+  }
+  // Turd size for a given hold power. Holding longer makes a bigger turd; super
+  // mode (and stacks) scale it up, capped so it never swallows the screen.
   _turdScale(power) {
-    let s = THREE.MathUtils.lerp(0.8, 1.9, power);
-    if (this.superTimer > 0) s *= SUPER_TURD_MULT;
-    return s;
+    const s = THREE.MathUtils.lerp(0.8, 1.9, power) * this._superSizeMult();
+    return Math.min(s, TURD_SCALE_MAX);
   }
   // Extra catch radius a turd of this size grants — a bigger turd splats over a
   // wider area, so it's easier to hit (and the giant super turds much easier).
   _turdCatch(power) {
     return Math.max(0, this._turdScale(power) - 1) * TURD_FOOTPRINT;
   }
+  // Score multiplier while super mode is active: 1.5x, +0.5x per stack (2x, 2.5x…).
+  _superScoreMult() {
+    return this.superStack > 0 ? 1 + 0.5 * this.superStack : 1;
+  }
 
   firePoop(power) {
     const p0 = this.pos.clone().add(new THREE.Vector3(0, -0.8, 0));
     const v0 = this._launchVel();
-    const group = buildPoop();
+    const fire = this.fireMode;
+    const group = fire ? buildFireball() : buildPoop();
     const turdScale = this._turdScale(power);
     const catchR = this._turdCatch(power);
     group.scale.setScalar(turdScale);
@@ -277,7 +300,7 @@ class Game {
         if (t !== null && t < tImpact) { tImpact = t; btTarget = tg; }
       }
     }
-    this.poop = { group, p0: p0.clone(), v0: v0.clone(), t: 0, pos: p0.clone(), vel: v0.clone(), prevY: p0.y, landing, btTarget, tImpact, power, turdScale, catch: catchR, spin: 0 };
+    this.poop = { group, p0: p0.clone(), v0: v0.clone(), t: 0, pos: p0.clone(), vel: v0.clone(), prevY: p0.y, landing, btTarget, tImpact, power, turdScale, catch: catchR, fire, spin: 0 };
     this.input.setEnabled(false);
     this.audio.poop();
     this.audio.whoosh();
@@ -287,10 +310,10 @@ class Game {
     const p = this.poop;
     const big = acc >= BULLSEYE_ACC;
     const where = impact || p.pos;
-    // the flat ground splat stays for every drop...
-    this.effects.splat(where, hit && big, p.turdScale);
+    // the flat ground splat stays for every drop (lava-coloured for fireballs)...
+    this.effects.splat(where, hit && big, p.turdScale, p.fire);
     // ...and a target hit gets an extra splash on top.
-    if (hit) this.effects.splash(where, p.turdScale);
+    if (hit) this.effects.splash(where, p.turdScale, p.fire);
     this.scene.remove(p.group);
 
     if (hit) {
@@ -303,7 +326,8 @@ class Game {
 
       const base = Math.round(target.value * mult);
       const comboMult = 1 + (this.combo - 1) * 0.5;
-      const gain = Math.round(base * comboMult);
+      // SUPER TURD MODE layers a points multiplier (1.5x, 2x, 2.5x… per stack) on top
+      const gain = Math.round(base * comboMult * this._superScoreMult());
       this.score += gain;
       this.dom.score.textContent = this.score;
 
@@ -317,8 +341,8 @@ class Game {
       this._showCombo();
       this.targets.kill(target);
 
-      // bombing the rare golden super turd kicks off SUPER TURD MODE
-      if (target.special === 'super') this._activateSuper();
+      // bombing the rare golden super turd activates / stacks SUPER TURD MODE
+      if (target.special === 'super') this._hitSuperTurd();
     } else {
       this.combo = 0;
       this.dom.comboPill.classList.remove('show');
@@ -339,30 +363,64 @@ class Game {
     }
   }
 
-  // Kick off SUPER TURD MODE: the seagull powers up (super-Saiyan camera spin +
-  // lightning + an elated yell), then drops giant 2.5x turds for 15 seconds.
-  _activateSuper() {
-    this.superTimer = SUPER_TIME;
-    this.superSpin = SUPER_SPIN_TIME;
-    // clean-cut into the transformation: drop any bullet-time framing
-    this.btActive = false; this.btHold = 0; this.btImpact = null;
-    this.targetTimeScale = 1;
-    this.input.setEnabled(false);
-    this.superAura.group.visible = true;
-    this.dom.poopBtn.classList.add('super');
-    this.dom.turdCam.classList.add('hidden');
-    this.dom.superBadge.classList.remove('hidden');
-    this.dom.superTime.textContent = SUPER_TIME;
-    this.audio.seagullYell();
-    this.audio.superZap();
-    this._showToast('SUPER TURD MODE! ⚡');
+  // Grab a super turd: the first one kicks off SUPER TURD MODE with the full
+  // super-Saiyan transformation (camera spin + lightning + elated yell); each
+  // additional one *stacks* — bigger turds, a higher points multiplier, and more
+  // time on the mode. Three in a row ignites TURD FIRE.
+  _hitSuperTurd() {
+    this.superStack += 1;
+    if (this.superStack === 1) {
+      this.superTimer = SUPER_TIME;
+      this.superSpin = SUPER_SPIN_TIME;
+      // clean-cut into the transformation: drop any bullet-time framing
+      this.btActive = false; this.btHold = 0; this.btImpact = null;
+      this.targetTimeScale = 1;
+      this.input.setEnabled(false);
+      this.superAura.group.visible = true;
+      this.dom.poopBtn.classList.add('super');
+      this.dom.turdCam.classList.add('hidden');
+      this.dom.superBadge.classList.remove('hidden');
+      this.audio.seagullYell();
+      this.audio.superZap();
+      this._showToast('SUPER TURD MODE! ⚡');
+    } else {
+      // stack: more time, bigger turds, a louder celebration
+      this.superTimer += SUPER_STACK_TIME;
+      this.audio.superStack();
+      this.audio.seagullYell();
+      this._showToast(`SUPER TURD ×${this.superStack}! ⚡`);
+    }
+
+    // three stacked super turds => TURD FIRE: the bird ignites, turds become
+    // streaking lava comets.
+    if (!this.fireMode && this.superStack >= FIRE_STACK) {
+      this.fireMode = true;
+      this.superAura.group.visible = false;
+      this.fireAura.group.visible = true;
+      this.dom.poopBtn.classList.add('fire');
+      this.dom.superBadge.classList.add('fire');
+      this.audio.fireRoar();
+      this._showToast('🔥 TURD FIRE!! 🔥');
+    }
+    this._updateSuperBadge();
+  }
+
+  _updateSuperBadge() {
+    this.dom.superBolt.textContent = this.fireMode ? '🔥' : '⚡';
+    this.dom.superLabel.textContent = this.fireMode ? 'TURD FIRE' : 'SUPER TURD';
+    this.dom.superMult.textContent = '×' + this._superScoreMult().toFixed(1);
+    this.dom.superTime.textContent = Math.ceil(this.superTimer);
   }
 
   _endSuper() {
     this.superTimer = 0;
+    this.superStack = 0;
+    this.fireMode = false;
     this.superAura.group.visible = false;
-    this.dom.poopBtn.classList.remove('super');
+    this.fireAura.group.visible = false;
+    this.dom.poopBtn.classList.remove('super', 'fire');
     this.dom.superBadge.classList.add('hidden');
+    this.dom.superBadge.classList.remove('fire');
   }
 
   _showToast(text, miss = false) {
@@ -451,13 +509,14 @@ class Game {
     this.birdModel.flap(this.clock.elapsedTime * (this.timeScale * 0.5 + 0.5), flapInt);
 
     // ---- SUPER TURD MODE ----
-    // The 15s giant-turd window counts down once the transformation is over.
+    // The giant-turd window counts down once the transformation is over.
     if (this.superTimer > 0 && !cinematic) {
       this.superTimer -= dtReal;
       if (this.superTimer <= 0) this._endSuper();
       else this.dom.superTime.textContent = Math.ceil(this.superTimer);
     }
-    if (this.superAura.group.visible) this.superAura.update(dtReal, cinematic ? 1 : 0.5);
+    if (this.fireMode) this.fireAura.update(dtReal, 1);
+    else if (this.superAura.group.visible) this.superAura.update(dtReal, cinematic ? 1 : 0.6);
 
     // ---- targets ----
     this.targets.update(dt, this.clock.elapsedTime, this.pos);
@@ -614,8 +673,14 @@ class Game {
     p.vel.set(p.v0.x, p.v0.y - GRAVITY * t, p.v0.z);
     p.spin += dt * 6;
     p.group.position.copy(p.pos);
-    p.group.rotation.x = p.spin;
-    p.group.rotation.z = p.spin * 0.7;
+    if (p.fire) {
+      // keep the comet upright (tail trailing up) and lay down a lava trail
+      p.group.rotation.set(0, p.spin, 0);
+      this.effects.ember(p.pos, p.turdScale);
+    } else {
+      p.group.rotation.x = p.spin;
+      p.group.rotation.z = p.spin * 0.7;
+    }
 
     // engage slow-mo a fixed lead-time before impact with the doomed target
     if (!this.btActive && p.btTarget && p.btTarget.alive && p.vel.y < 0 &&

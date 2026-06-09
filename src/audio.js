@@ -128,4 +128,19 @@ export class Audio {
     this._tone(160, 0.55, 'sawtooth', 0.4, 1500);
     this._noise(0.55, 0.32, 3200);
   }
+
+  // A bright rising arpeggio when a super turd stacks the mode higher.
+  superStack() {
+    if (!this.enabled || !this.ctx) return;
+    const notes = [660, 880, 1100, 1320];
+    notes.forEach((f, i) => setTimeout(() => this._tone(f, 0.1, 'triangle', 0.4), i * 60));
+  }
+
+  // A roaring whoosh + crackle when the bird bursts into TURD FIRE mode.
+  fireRoar() {
+    if (!this.enabled || !this.ctx) return;
+    this._tone(70, 0.8, 'sawtooth', 0.45, 180);
+    this._tone(120, 0.7, 'square', 0.3, 60);
+    this._noise(0.8, 0.45, 1600);
+  }
 }
