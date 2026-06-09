@@ -40,11 +40,28 @@ proper installable PWA:
 > Service workers require a secure context, so they're active over `https://`
 > and on `http://localhost` (handy for local testing).
 
+## Levels
+
+Pick a level at the start screen — each keeps its **own high score**:
+
+- **🏖️ Beach** — the original infinite runner (below).
+- **💒 Wedding** — a garden ceremony: guests in chairs in rows with an aisle
+  down the centre, the **couple & priest** at the head of the aisle (worth
+  **double**). The bird flies the aisle on **auto-pilot**, sweeps past the
+  couple, banks around, and loops back over the crowd again and again — you only
+  steer **altitude** and when/how-big to drop.
+- **🎸 Rock Concert** — a packed pit between barriers with a **band** up on the
+  stage (worth **double**). Same auto-looping flight, vertical control only.
+
+The two venue levels pack the crowd in **tight**, so a big, fully-charged turd
+(and especially a giant **SUPER TURD**) **splashes a whole cluster at once** —
+chase the biggest multi-hit combos you can.
+
 ## How to play
 
-It's an **infinite runner**: the seagull always flies forward down a long,
-straight beach lane (think Temple Run). You can't turn around — you line up the
-drops as targets stream toward you.
+The **Beach** is an **infinite runner**: the seagull always flies forward down a
+long, straight beach lane (think Temple Run). You can't turn around — you line up
+the drops as targets stream toward you.
 
 - **Drag left/right** to strafe across the lane; **drag up/down** to climb or
   dive (altitude changes how far ahead the drop lands).
@@ -98,8 +115,9 @@ manifest.webmanifest  # PWA manifest (installable, fullscreen)
 icon.svg          # app / home-screen icon
 vendor/           # vendored three.module.js
 src/
-  main.js         # game loop, flight, physics, bullet time, scoring
-  world.js        # beach scene + target manager
+  main.js         # game loop, flight (runner + circuit), physics, scoring
+  world.js        # beach / wedding / concert venues + target manager
+  levels.js       # level registry + wedding/concert crowd layouts
   models.js       # procedural low-poly model builders
   input.js        # touch joystick + poop button + keyboard
   effects.js      # splats, decals, reticle, bird shadow

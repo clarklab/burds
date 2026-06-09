@@ -82,18 +82,12 @@
       <div class="logo-stage" id="logoStage">
         <img class="logo" src="./logo.webp" width="900" height="483" alt="BURDS — a game about bird turds" />
       </div>
-      <div class="how-to">
-        <div class="howrow"><span class="howicon">👆</span><span>Drag left/right to <b>strafe</b> down the lane (up/down to dive)</span></div>
-        <div class="howrow"><span class="howicon">🎯</span><span>Line up under a target — the <b>reticle hones</b> from big to tight</span></div>
-        <div class="howrow"><span class="howicon">💩</span><span><b>Release</b> when it's tight to splat. Hold longer = <b>bigger turd</b></span></div>
-        <div class="howrow"><span class="howicon">⭐</span><span>Dead-center = <b>bullseye</b>, big points</span></div>
-        <div class="howrow"><span class="howicon">⚡</span><span>Bomb the gold <b>SUPER TURD</b> for 15s of giant turds</span></div>
-        <div class="howrow"><span class="howicon">🐢</span><span>Close hits trigger slow-mo <b>bullet time</b></span></div>
-      </div>
+      <div class="level-pick" id="levelPick"></div>
+      <div class="how-to" id="howTo"></div>
       <button id="playBtn" class="big-btn">PLAY</button>
       <p class="best-line">Best: <span id="menuBest">0</span></p>
       <div class="board" id="menuBoard">
-        <div class="board-title">🏆 Global Top</div>
+        <div class="board-title" id="menuBoardTitle">🏆 Global Top</div>
         <ol class="board-list" id="menuBoardList"></ol>
       </div>
     </div>
@@ -120,6 +114,7 @@
         <ol class="board-list" id="goBoardList"></ol>
       </div>
       <button id="againBtn" class="big-btn">PLAY AGAIN</button>
+      <button id="menuBtn" class="ghost-btn">⟵ PICK A LEVEL</button>
     </div>
   </div>
 

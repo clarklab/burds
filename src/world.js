@@ -3,6 +3,7 @@ import {
   buildPerson, buildKid, buildBiker, buildPicnic, buildCar,
   buildUmbrella, buildPalm, buildCypress, buildPine, buildRock,
   buildSuperTurd, mat,
+  buildArch, buildFlowerStand, buildStage, buildSpeakerStack, buildBarrier,
 } from './models.js';
 
 export const WORLD_RADIUS = 130;     // playable radius (ground disc)
@@ -37,9 +38,14 @@ export function buildWorld(scene, renderer) {
   scene.background = new THREE.Color(0x8fd6ee);
   scene.fog = new THREE.Fog(0xbfe6ee, 200, 560);
 
+  // Everything this builder adds lives under one root group, so switching
+  // levels can tear the whole world down with a single removal.
+  const root = new THREE.Group();
+  scene.add(root);
+
   // Lights
   const hemi = new THREE.HemisphereLight(0xcdeffc, 0xe8d9a8, 0.95);
-  scene.add(hemi);
+  root.add(hemi);
   const sun = new THREE.DirectionalLight(0xfff3d6, 1.5);
   sun.position.set(60, 120, 40);
   sun.castShadow = true;
@@ -49,7 +55,7 @@ export function buildWorld(scene, renderer) {
   sun.shadow.camera.top = s; sun.shadow.camera.bottom = -s;
   sun.shadow.camera.far = 400;
   sun.shadow.bias = -0.0004;
-  scene.add(sun);
+  root.add(sun);
 
   // Sky dome (gradient) — follows the bird so its edge is never reached.
   const skyGeo = new THREE.SphereGeometry(500, 24, 16);
@@ -64,13 +70,13 @@ export function buildWorld(scene, renderer) {
       void main(){ float h = clamp((normalize(vp).y*0.5+0.5),0.0,1.0); gl_FragColor = vec4(mix(bottom, top, pow(h,0.8)),1.0);} `,
   });
   const sky = new THREE.Mesh(skyGeo, skyMat);
-  scene.add(sky);
+  root.add(sky);
 
   // The sun billboard (kept at a fixed offset from the bird).
   const sunDisc = new THREE.Mesh(new THREE.CircleGeometry(28, 24), new THREE.MeshBasicMaterial({ color: 0xfff7cf }));
   const sunOffset = new THREE.Vector3(150, 180, -260);
   sunDisc.position.copy(sunOffset);
-  scene.add(sunDisc);
+  root.add(sunDisc);
 
   // Ground: big sand disc that re-centres on the bird (a circle looks identical
   // from any centre, so the slide is seamless).
@@ -80,18 +86,18 @@ export function buildWorld(scene, renderer) {
   );
   sand.rotation.x = -Math.PI / 2;
   sand.receiveShadow = true;
-  scene.add(sand);
+  root.add(sand);
 
   // Sea: a long plane running along the lane on the far left side.
   const sea = new THREE.Mesh(new THREE.PlaneGeometry(260, 1200), mat(0x2aa3d6, { transparent: true, opacity: 0.92 }));
   sea.rotation.x = -Math.PI / 2;
   sea.position.set(-200, 0.05, 0);
-  scene.add(sea);
+  root.add(sea);
   // Wet shoreline band between the sea and the sand.
   const shore = new THREE.Mesh(new THREE.PlaneGeometry(60, 1200), mat(0x7fd0e0, { transparent: true, opacity: 0.6 }));
   shore.rotation.x = -Math.PI / 2;
   shore.position.set(-92, 0.06, 0);
-  scene.add(shore);
+  root.add(shore);
 
   // Courseway: a boardwalk strip running ALONG the lane (down -Z), with dashes
   // marching down the middle. Snapping its z to the dash pitch keeps the dashes
@@ -100,7 +106,7 @@ export function buildWorld(scene, renderer) {
   const road = new THREE.Mesh(new THREE.PlaneGeometry(COURSE_HALF * 2 + 6, 1200), mat(0x6d6f78));
   road.rotation.x = -Math.PI / 2;
   road.position.set(0, 0.08, 0);
-  scene.add(road);
+  root.add(road);
   const dashes = new THREE.Group();
   for (let i = -50; i < 50; i++) {
     const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 5), mat(0xffe066));
@@ -108,7 +114,7 @@ export function buildWorld(scene, renderer) {
     dash.position.set(0, 0.1, i * DASH_PITCH);
     dashes.add(dash);
   }
-  scene.add(dashes);
+  root.add(dashes);
 
   // Decorations down BOTH shoulders of the lane — a Croatian-coast mix of
   // umbrella pines, slender cypresses and palms (with a few beach umbrellas),
@@ -137,7 +143,7 @@ export function buildWorld(scene, renderer) {
     decorGroup.add(item);
     decor.push(item);
   }
-  scene.add(decorGroup);
+  root.add(decorGroup);
 
   // Seaside rocks strung along the shoreline (just sea-ward of the path), also
   // recycling so the rocky coast never ends.
@@ -153,7 +159,7 @@ export function buildWorld(scene, renderer) {
     rocksGroup.add(item);
     rocks.push(item);
   }
-  scene.add(rocksGroup);
+  root.add(rocksGroup);
 
   return {
     // Keep the world centred on the bird as it runs down the straightaway.
@@ -178,6 +184,167 @@ export function buildWorld(scene, renderer) {
         }
       }
     },
+    dispose() { scene.remove(root); },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Shared sky dome used by the fixed-venue (circuit) levels. Unlike the beach
+// dome it never needs to scroll — the venue doesn't move — but we still recentre
+// it on the bird so its edge is never reached.
+// ---------------------------------------------------------------------------
+function gradientSky(topHex, bottomHex) {
+  const mtl = new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    uniforms: { top: { value: new THREE.Color(topHex) }, bottom: { value: new THREE.Color(bottomHex) } },
+    vertexShader: `varying vec3 vp; void main(){ vp = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);} `,
+    fragmentShader: `varying vec3 vp; uniform vec3 top; uniform vec3 bottom;
+      void main(){ float h = clamp((normalize(vp).y*0.5+0.5),0.0,1.0); gl_FragColor = vec4(mix(bottom, top, pow(h,0.8)),1.0);} `,
+  });
+  return new THREE.Mesh(new THREE.SphereGeometry(500, 24, 16), mtl);
+}
+
+// ---------------------------------------------------------------------------
+// WEDDING venue — a garden ceremony: green lawn, white aisle runner, a floral
+// arch at the head, flower pedestals lining the aisle. White-and-flowers, happy.
+// The crowd (guests in chairs) and the couple/priest are spawned by the circuit
+// TargetManager from the level's layout, not here.
+// ---------------------------------------------------------------------------
+export function buildWeddingWorld(scene, renderer) {
+  scene.background = new THREE.Color(0xdbeffd);
+  scene.fog = new THREE.Fog(0xeaf6ff, 160, 480);
+
+  const root = new THREE.Group();
+  scene.add(root);
+
+  const hemi = new THREE.HemisphereLight(0xffffff, 0xd8e8c8, 1.05);
+  root.add(hemi);
+  const sun = new THREE.DirectionalLight(0xfff4e0, 1.4);
+  sun.position.set(40, 120, 80);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(1024, 1024);
+  const s = 120;
+  sun.shadow.camera.left = -s; sun.shadow.camera.right = s;
+  sun.shadow.camera.top = s; sun.shadow.camera.bottom = -s;
+  sun.shadow.camera.far = 360;
+  sun.shadow.bias = -0.0004;
+  root.add(sun);
+
+  const sky = gradientSky(0x7fc6f0, 0xeaf6ff);
+  root.add(sky);
+
+  // Lawn
+  const lawn = new THREE.Mesh(new THREE.CircleGeometry(WORLD_RADIUS + 40, 48), mat(0x86c06a));
+  lawn.rotation.x = -Math.PI / 2; lawn.receiveShadow = true;
+  root.add(lawn);
+
+  // White aisle runner down the centre (Z axis), couple end at -Z.
+  const runner = new THREE.Mesh(new THREE.PlaneGeometry(4.4, 130), mat(0xfbf7f0));
+  runner.rotation.x = -Math.PI / 2; runner.position.set(0, 0.05, -5);
+  root.add(runner);
+  // A low dais under the arch for the couple/priest.
+  const dais = new THREE.Mesh(new THREE.CircleGeometry(8, 28), mat(0xf3ece0));
+  dais.rotation.x = -Math.PI / 2; dais.position.set(0, 0.07, -50);
+  root.add(dais);
+
+  // Floral arch at the head of the aisle.
+  const arch = buildArch(); arch.position.set(0, 0, -52); root.add(arch);
+
+  // Flower pedestals marching down both sides of the aisle.
+  for (let i = 0; i < 9; i++) {
+    const z = -44 + i * 9;
+    for (const sx of [-1, 1]) {
+      const stand = buildFlowerStand();
+      stand.position.set(sx * 3.0, 0, z);
+      root.add(stand);
+    }
+  }
+  // A ring of trees framing the garden.
+  for (let i = 0; i < 14; i++) {
+    const a = (i / 14) * Math.PI * 2;
+    const tree = (i % 2 ? buildCypress() : buildPine());
+    tree.position.set(Math.cos(a) * 70, 0, -5 + Math.sin(a) * 70);
+    root.add(tree);
+  }
+
+  return {
+    update(birdPos) { sky.position.set(birdPos.x, 0, birdPos.z); },
+    dispose() { scene.remove(root); },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// ROCK CONCERT venue — dusk/night, a big stage at the -Z end with a lighting
+// truss and PA speaker stacks, crowd barriers running down both sides. The
+// throng of fans and the band are spawned by the circuit TargetManager.
+// ---------------------------------------------------------------------------
+export function buildConcertWorld(scene, renderer) {
+  scene.background = new THREE.Color(0x14121f);
+  scene.fog = new THREE.Fog(0x14121f, 140, 420);
+
+  const root = new THREE.Group();
+  scene.add(root);
+
+  const hemi = new THREE.HemisphereLight(0x4a4470, 0x101018, 0.7);
+  root.add(hemi);
+  const key = new THREE.DirectionalLight(0xa6b6ff, 0.8);
+  key.position.set(20, 90, 60);
+  key.castShadow = true;
+  key.shadow.mapSize.set(1024, 1024);
+  const s = 120;
+  key.shadow.camera.left = -s; key.shadow.camera.right = s;
+  key.shadow.camera.top = s; key.shadow.camera.bottom = -s;
+  key.shadow.camera.far = 360;
+  key.shadow.bias = -0.0004;
+  root.add(key);
+  // A couple of colored point lights wash the stage for concert mood.
+  const stageLight1 = new THREE.PointLight(0xff3b6b, 0.9, 160); stageLight1.position.set(-16, 18, -46); root.add(stageLight1);
+  const stageLight2 = new THREE.PointLight(0x3bdcff, 0.9, 160); stageLight2.position.set(16, 18, -46); root.add(stageLight2);
+
+  const sky = gradientSky(0x0a0a14, 0x241f3a);
+  root.add(sky);
+
+  // Dark venue floor.
+  const floor = new THREE.Mesh(new THREE.CircleGeometry(WORLD_RADIUS + 40, 48), mat(0x1c1a26));
+  floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true;
+  root.add(floor);
+  // Lit pit area between the barriers.
+  const pit = new THREE.Mesh(new THREE.PlaneGeometry(30, 120), mat(0x2a2740));
+  pit.rotation.x = -Math.PI / 2; pit.position.set(0, 0.04, 0);
+  root.add(pit);
+
+  // The stage at the -Z end.
+  const stage = buildStage(34, 14); stage.position.set(0, 0, -56); root.add(stage);
+  // PA speaker stacks flanking it.
+  for (const sx of [-1, 1]) { const sp = buildSpeakerStack(); sp.position.set(sx * 19, 0, -52); root.add(sp); }
+
+  // Crowd barriers down both sides, repeated in segments.
+  const barriers = [];
+  for (let i = 0; i < 12; i++) {
+    const z = -40 + i * 9;
+    for (const sx of [-1, 1]) {
+      const b = buildBarrier(9);
+      b.position.set(sx * 14, 0, z);
+      root.add(b);
+      barriers.push(b);
+    }
+  }
+
+  const lamps = stage.userData.lamps || [];
+  let t = 0;
+  return {
+    update(birdPos) {
+      sky.position.set(birdPos.x, 0, birdPos.z);
+      // strobe/pulse the colored stage lamps + point lights for a gig feel
+      t += 0.016;
+      stageLight1.intensity = 0.7 + Math.sin(t * 6) * 0.4;
+      stageLight2.intensity = 0.7 + Math.sin(t * 6 + 2) * 0.4;
+      for (let i = 0; i < lamps.length; i++) {
+        lamps[i].material.opacity = 1;
+        lamps[i].visible = ((Math.sin(t * 5 + i) > -0.3));
+      }
+    },
+    dispose() { scene.remove(root); },
   };
 }
 
@@ -196,6 +363,10 @@ const TYPE_KEYS = Object.keys(TYPES);
 // The rare golden SUPER TURD pickup. Bombing it triggers SUPER TURD MODE.
 const SUPER_CHANCE = 0.14;   // odds a fresh spawn rolls a super turd (max one alive)
 const SUPER_CFG = { value: 250, radius: 2.2, moving: false };
+
+// Circuit (wedding / concert) tuning.
+const CIRCUIT_RESPAWN = 2.6;       // seconds before a downed target stands back up
+const CIRCUIT_SUPER_CHANCE = 0.03; // odds a respawning crowd slot rolls a super turd
 
 function buildBullseye() {
   const g = new THREE.Group();
@@ -232,14 +403,104 @@ export class TargetManager {
     // How many targets are in flight down the lane at once.
     this.maxTargets = 6;
     this._frontZ = -SPAWN_AHEAD; // z of the furthest-ahead target spawned so far
+    // 'runner' = streaming beach lane; 'circuit' = a fixed venue layout the
+    // bird loops over (wedding / concert).
+    this.mode = 'runner';
+    this.slots = [];
+    this.level = null;
   }
 
-  reset(birdPos) {
+  reset(birdPos, level) {
     for (const t of this.targets) this.scene.remove(t.group);
     this.targets = [];
+    this.slots = [];
+    this.mode = level && level.mode === 'circuit' ? 'circuit' : 'runner';
+    this.level = level || null;
+    if (this.mode === 'circuit') {
+      for (const slot of level.layout()) {
+        slot.respawn = 0; slot.target = null;
+        this.slots.push(slot);
+        this._spawnSlot(slot);
+      }
+      return;
+    }
     const baseZ = birdPos ? birdPos.z : 0;
     this._frontZ = baseZ - SPAWN_AHEAD + SPAWN_GAP; // first _advanceFront lands at -SPAWN_AHEAD
     for (let i = 0; i < this.maxTargets; i++) this.spawn(null, this._advanceFront());
+  }
+
+  // ---- circuit (fixed-venue) targets -------------------------------------
+  // Each layout "slot" is a fixed spot in the venue (a chair, a band member,
+  // the couple…). Killed targets respawn in place after a short delay so the
+  // venue stays populated for the bird's repeated passes.
+  _spawnSlot(slot) {
+    let group, special = null, value = slot.value, scale = slot.scale, radius = slot.radius, bull = slot.bull;
+    // occasionally float a golden SUPER TURD into a crowd slot (max one alive)
+    if (!slot.vip && !this._hasSuper() && Math.random() < CIRCUIT_SUPER_CHANCE) {
+      special = 'super'; group = buildSuperTurd();
+      value = SUPER_CFG.value; scale = 1.0; radius = SUPER_CFG.radius; bull = true;
+    } else {
+      group = slot.build();
+    }
+    const baseY = slot.y || 0;
+    group.position.set(slot.x, baseY, slot.z);
+    group.rotation.y = slot.faceY || 0;
+    group.scale.setScalar(scale);
+    // crowd figures don't cast shadows — keeps the dense scene cheap.
+    if (!slot.vip && !special) group.traverse((o) => { if (o.isMesh) o.castShadow = false; });
+
+    const localTop = group.userData.headHeight || 2;
+    let bullseye = null;
+    if (bull) {
+      bullseye = buildBullseye();
+      bullseye.position.y = localTop + 0.8;
+      group.add(bullseye);
+    }
+    this.scene.add(group);
+    const t = {
+      key: slot.kind, group, bullseye,
+      value, radius: radius * scale, hitY: localTop * scale + baseY, baseY,
+      bullLocalY: localTop + 0.8,
+      orbit: false, special, slot,
+      driftPhase: 0, bobT: Math.random() * 10, sway: Math.random() * Math.PI * 2,
+      alive: true, dying: 0,
+    };
+    this.targets.push(t);
+    slot.target = t;
+    return t;
+  }
+
+  _updateCircuit(dt) {
+    for (let i = this.targets.length - 1; i >= 0; i--) {
+      const tg = this.targets[i];
+      if (!tg.alive) {
+        tg.dying += dt;
+        const k = tg.dying / 0.6;
+        const sc = (tg.slot ? tg.slot.scale : 1);
+        tg.group.scale.setScalar(Math.max(0.001, sc * (1 - k)));
+        tg.group.position.y = (tg.baseY || 0) + k * 1.5;
+        tg.group.rotation.z += dt * 6;
+        if (tg.dying > 0.6) {
+          this.scene.remove(tg.group);
+          this.targets.splice(i, 1);
+          if (tg.slot) { tg.slot.target = null; tg.slot.respawn = CIRCUIT_RESPAWN; }
+        }
+        continue;
+      }
+      if (tg.bullseye) {
+        tg.bobT += dt;
+        tg.bullseye.position.y = tg.bullLocalY + Math.sin(tg.bobT * 2) * 0.2;
+        tg.bullseye.rotation.y += dt * 0.8;
+      }
+      if (tg.special) tg.group.rotation.y += dt * 1.5;   // super turd spins
+      else { tg.sway += dt; tg.group.rotation.z = Math.sin(tg.sway * 2) * 0.04; } // gentle crowd sway
+    }
+    // refill empty slots whose respawn timer has elapsed
+    for (const slot of this.slots) {
+      if (slot.target) continue;
+      slot.respawn -= dt;
+      if (slot.respawn <= 0) this._spawnSlot(slot);
+    }
   }
 
   // March the spawn cursor one gap further ahead and return the new z.
@@ -300,6 +561,7 @@ export class TargetManager {
   }
 
   update(dt, t, birdPos) {
+    if (this.mode === 'circuit') { this._updateCircuit(dt); return; }
     const bz = birdPos ? birdPos.z : 0;
     for (let i = this.targets.length - 1; i >= 0; i--) {
       const tg = this.targets[i];

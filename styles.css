@@ -187,6 +187,42 @@ html, body {
 .mini-btn:active { transform: translateY(3px); box-shadow: 0 1px 0 #d2710e; }
 .mini-btn:disabled { filter: grayscale(.5) brightness(1.05); opacity: .7; box-shadow: 0 4px 0 #b9c4cc; }
 
+/* ---------- Level picker ---------- */
+.level-pick {
+  display: flex;
+  gap: 8px;
+  margin: 4px 0 16px;
+}
+.level-chip {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 10px 6px;
+  background: #f1f6f9;
+  border: 2px solid #e0e8ee;
+  border-radius: 16px;
+  cursor: pointer;
+  transition: transform .08s, border-color .12s, background .12s, box-shadow .12s;
+}
+.level-chip .lc-emoji { font-size: 26px; line-height: 1; }
+.level-chip .lc-name {
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: .5px;
+  text-transform: uppercase;
+  color: #5a6b7a;
+}
+.level-chip:active { transform: translateY(2px); }
+.level-chip.selected {
+  background: linear-gradient(180deg, #fff4d9, #ffe6b3);
+  border-color: #ffb02e;
+  box-shadow: 0 4px 0 #e7a32b, 0 6px 14px rgba(255,176,46,.35);
+}
+.level-chip.selected .lc-name { color: #b9700e; }
+
 .how-to {
   text-align: left;
   background: #f1f6f9;
@@ -217,6 +253,22 @@ html, body {
 .big-btn:active { transform: translateY(6px); box-shadow: 0 2px 0 #c43354, 0 4px 12px rgba(255,77,109,.4); }
 
 .best-line { margin-top: 14px; font-size: 14px; font-weight: 700; color: #6a7a88; }
+
+.ghost-btn {
+  width: 100%;
+  margin-top: 10px;
+  padding: 12px;
+  font-size: 14px;
+  font-weight: 900;
+  letter-spacing: 1px;
+  color: #6a7a88;
+  background: #f1f6f9;
+  border: 2px solid #e0e8ee;
+  border-radius: 16px;
+  cursor: pointer;
+  transition: transform .08s, background .12s;
+}
+.ghost-btn:active { transform: translateY(2px); background: #e7eef3; }
 
 .final-score {
   font-size: clamp(56px, 18vw, 92px);
