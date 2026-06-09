@@ -486,4 +486,176 @@ export function buildFireball() {
   return g;
 }
 
+// ===========================================================================
+// WEDDING + ROCK CONCERT cast & props.
+//
+// These deliberately lean on the SAME low-poly primitives and the SAME
+// SKIN / SHIRTS palettes as the beach folk, so the crowds match the rest of
+// the game's art. Crowd figures are kept lightweight (few meshes) because the
+// venues pack dozens of them in tight rows.
+// ===========================================================================
+
+const HAIR = [0x2a1a0a, 0x4a3120, 0x1a1a1a, 0x6b4a2a, 0xc4a35a, 0x8a8a8a];
+const WED_PANTS = [0x394a59, 0x2a2a3a, 0x5a4a6a, 0x6a3a3a, 0x335a45];
+
+// A wedding guest sitting on a folding chair, facing -Z (toward the altar).
+export function buildSeatedGuest({ shirt = pick(SHIRTS), skin = pick(SKIN), pants = pick(WED_PANTS), chair = 0xe8e0d2 } = {}) {
+  const g = new THREE.Group();
+  const seatY = 0.55;
+  g.add(box(0.64, 0.1, 0.58, chair, 0, seatY, 0));            // seat
+  g.add(box(0.64, 0.6, 0.1, chair, 0, seatY + 0.35, 0.26));   // backrest
+  g.add(box(0.6, seatY, 0.1, chair, 0, seatY / 2, 0.24));     // back legs
+  g.add(box(0.6, seatY, 0.1, chair, 0, seatY / 2, -0.24));    // front legs
+  g.add(box(0.54, 0.22, 0.44, pants, 0, seatY + 0.16, -0.1)); // thighs
+  g.add(box(0.44, 0.5, 0.22, pants, 0, seatY - 0.15, -0.32)); // shins
+  g.add(box(0.72, 0.78, 0.44, shirt, 0, seatY + 0.62, 0.04)); // torso
+  g.add(box(0.5, 0.48, 0.46, skin, 0, seatY + 1.2, 0.04));    // head
+  g.add(box(0.54, 0.2, 0.5, pick(HAIR), 0, seatY + 1.42, 0.06)); // hair
+  g.userData.headHeight = seatY + 1.52;
+  return g;
+}
+
+// The groom: dark suit, white shirt front, bowtie + boutonniere.
+export function buildGroom() {
+  const suit = pick([0x2b2b3a, 0x1c1c28, 0x33333f]);
+  const g = buildPerson({ scale: 1.0, shirt: suit, pants: suit, skin: pick(SKIN) });
+  g.add(box(0.34, 0.7, 0.12, 0xffffff, 0, 1.6, -0.26)); // shirt front
+  g.add(box(0.22, 0.1, 0.1, 0x111111, 0, 1.72, -0.32)); // bowtie
+  g.add(sphere(0.1, 0xff5d8f, 6).translateX(0.3).translateY(1.7).translateZ(-0.26)); // boutonniere
+  return g;
+}
+
+// The bride: white gown (cone skirt), veil, bouquet.
+export function buildBride() {
+  const white = 0xffffff;
+  const g = buildPerson({ scale: 1.0, shirt: white, pants: white, skin: pick(SKIN) });
+  const skirt = cone(0.85, 1.3, white, 12); skirt.position.y = 0.78; g.add(skirt);
+  const veil = new THREE.Mesh(new THREE.PlaneGeometry(0.78, 1.2), mat(0xffffff, { transparent: true, opacity: 0.7, side: THREE.DoubleSide }));
+  veil.position.set(0, 2.05, 0.34); g.add(veil);
+  for (let i = 0; i < 6; i++) {
+    g.add(sphere(0.11, pick([0xff8fab, 0xffd1dc, 0xffffff, 0xffe066]), 6)
+      .translateX(0.5 + (Math.random() - 0.5) * 0.3).translateY(1.3 + (Math.random() - 0.5) * 0.3).translateZ(-0.3));
+  }
+  g.userData.headHeight = 2.75;
+  return g;
+}
+
+// The priest: dark cassock + white collar, holding a book.
+export function buildPriest() {
+  const robe = 0x1c1c22;
+  const g = buildPerson({ scale: 1.0, shirt: robe, pants: robe, skin: pick(SKIN) });
+  const cassock = cone(0.7, 1.4, robe, 10); cassock.position.y = 0.78; g.add(cassock);
+  g.add(box(0.4, 0.16, 0.12, 0xffffff, 0, 1.96, -0.27)); // collar
+  g.add(box(0.3, 0.4, 0.1, 0x7a2d2d, 0.42, 1.4, -0.3));  // book
+  g.userData.headHeight = 2.75;
+  return g;
+}
+
+// A rock band member. role: 'mic' | 'guitar' | 'bass' | 'drums'.
+export function buildBandMember(role = 'guitar') {
+  const shirt = pick([0x1a1a1a, 0x2a2a3a, 0x4a1f2f, 0x1f2f4a, 0x3a1f4a]);
+  const g = buildPerson({ scale: 1.0, shirt, pants: 0x14141a, skin: pick(SKIN) });
+  if (role === 'drums') {
+    const kit = new THREE.Group();
+    for (const [dx, dz, r, c] of [[-0.95, 0.95, 0.42, 0xcc2222], [0, 1.05, 0.5, 0xeeeeee], [0.95, 0.95, 0.42, 0x2266cc]]) {
+      const drum = cyl(r, r, 0.42, c, 12); drum.position.set(dx, 1.0, dz); kit.add(drum);
+    }
+    const cym = cyl(0.5, 0.5, 0.04, 0xd4af37, 14); cym.position.set(1.2, 1.7, 0.5); kit.add(cym);
+    g.add(kit);
+  } else if (role === 'mic') {
+    const stand = cyl(0.04, 0.04, 1.7, 0x222222, 6); stand.position.set(0, 0.85, -0.55); g.add(stand);
+    g.add(sphere(0.12, 0x333333, 7).translateY(1.8).translateZ(-0.55));
+  } else {
+    const body = box(0.5, 0.74, 0.16, role === 'bass' ? 0x202024 : 0xcc3322, 0.32, 1.2, -0.32);
+    body.rotation.z = 0.5; g.add(body);
+    const neck = box(0.12, 1.2, 0.1, 0x6b4a2a, -0.22, 1.5, -0.32);
+    neck.rotation.z = 0.5; g.add(neck);
+  }
+  g.userData.headHeight = 2.75;
+  return g;
+}
+
+// A standing concert-goer in the throng (reuses the beach person model).
+export function buildFan() {
+  return buildPerson({ scale: 0.95, shirt: pick(SHIRTS), skin: pick(SKIN), pants: pick([0x222228, 0x394a59, 0x14141a, 0x4a2f3a]) });
+}
+
+// ---- decor props (no targets) -------------------------------------------
+
+// A flower-garlanded wedding arch at the head of the aisle.
+export function buildArch() {
+  const g = new THREE.Group();
+  const white = 0xf7f4ef;
+  const blooms = [0xff8fab, 0xffd1dc, 0xffffff, 0xffe066, 0x9d7bd8, 0xa6e3a1];
+  for (const sx of [-1, 1]) {
+    const post = cyl(0.16, 0.2, 5, white, 8); post.position.set(sx * 3.2, 2.5, 0); g.add(post);
+    for (let i = 0; i < 6; i++) {
+      g.add(sphere(0.2, pick(blooms), 6).translateX(sx * 3.2).translateY(0.7 + i * 0.8).translateZ(0));
+    }
+  }
+  g.add(box(7.2, 0.3, 0.3, white, 0, 5, 0)); // top beam
+  for (let i = 0; i < 22; i++) {
+    const x = (-1 + 2 * (i / 21)) * 3.4;
+    g.add(sphere(0.16 + Math.random() * 0.12, pick(blooms), 6).translateX(x).translateY(5).translateZ(0));
+  }
+  return g;
+}
+
+// A pedestal of flowers lining the aisle.
+export function buildFlowerStand() {
+  const g = new THREE.Group();
+  const blooms = [0xff8fab, 0xffd1dc, 0xffffff, 0xffe066, 0x9d7bd8, 0xa6e3a1];
+  const pole = cyl(0.06, 0.09, 1.4, 0xf0e9dd, 6); pole.position.y = 0.7; g.add(pole);
+  const bowl = cyl(0.3, 0.18, 0.3, 0xf0e9dd, 8); bowl.position.y = 1.45; g.add(bowl);
+  for (let i = 0; i < 9; i++) {
+    g.add(sphere(0.16, pick(blooms), 6)
+      .translateX((Math.random() - 0.5) * 0.5).translateY(1.6 + Math.random() * 0.3).translateZ((Math.random() - 0.5) * 0.5));
+  }
+  return g;
+}
+
+// The concert stage: a raised deck, backdrop, lighting truss and colored lamps.
+export function buildStage(width = 30, depth = 12) {
+  const g = new THREE.Group();
+  g.add(box(width, 1.6, depth, 0x1a1a1f, 0, 0.8, 0));            // deck
+  g.add(box(width, 0.2, depth, 0x35353d, 0, 1.7, 0));           // surface
+  g.add(box(width, 9, 0.6, 0x101015, 0, 5, -depth / 2));        // backdrop
+  g.add(box(width * 0.5, 3, 0.2, 0x6a1b2a, 0, 6, -depth / 2 + 0.4)); // banner
+  for (const sx of [-1, 1]) g.add(box(0.4, 9, 0.4, 0x2a2a30, sx * (width / 2 - 0.5), 5, -depth / 2 + 0.5));
+  g.add(box(width, 0.4, 0.4, 0x2a2a30, 0, 9.2, -depth / 2 + 0.5)); // top truss
+  const lamps = [];
+  for (let i = 0; i < 6; i++) {
+    const c = [0xff3b6b, 0x3bdcff, 0xffe24a, 0x8a5bff, 0x4dff88, 0xff8a1e][i];
+    const lamp = new THREE.Mesh(new THREE.ConeGeometry(0.4, 0.8, 8), new THREE.MeshBasicMaterial({ color: c }));
+    lamp.position.set(-width / 2 + 2.5 + i * (width - 5) / 5, 8.7, -depth / 2 + 0.8);
+    lamp.rotation.x = Math.PI;
+    g.add(lamp);
+    lamps.push(lamp);
+  }
+  g.userData.lamps = lamps;
+  return g;
+}
+
+// A stack of PA speakers flanking the stage.
+export function buildSpeakerStack() {
+  const g = new THREE.Group();
+  for (let i = 0; i < 3; i++) {
+    const y = 1.1 + i * 2.2;
+    g.add(box(2.4, 2.2, 2.0, 0x0d0d10, 0, y, 0));
+    const c1 = cyl(0.5, 0.7, 0.3, 0x1a1a1f, 12); c1.rotation.x = Math.PI / 2; c1.position.set(0, y + 0.4, 1.0); g.add(c1);
+    const c2 = cyl(0.32, 0.46, 0.3, 0x1a1a1f, 12); c2.rotation.x = Math.PI / 2; c2.position.set(0, y - 0.5, 1.0); g.add(c2);
+  }
+  return g;
+}
+
+// A crowd-barrier rail segment running along Z.
+export function buildBarrier(len = 10) {
+  const g = new THREE.Group();
+  g.add(box(0.15, 0.15, len, 0x3a3a42, 0, 1.0, 0));
+  g.add(box(0.15, 0.15, len, 0x3a3a42, 0, 0.55, 0));
+  const n = Math.max(2, Math.round(len / 2.5));
+  for (let i = 0; i <= n; i++) g.add(box(0.12, 1.1, 0.12, 0x4a4a52, 0, 0.55, -len / 2 + i * (len / n)));
+  return g;
+}
+
 export { SHIRTS, SKIN };

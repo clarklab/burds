@@ -8,12 +8,17 @@
 // score submitted while briefly offline) are idempotent and never double-count.
 import { getStore } from '@netlify/blobs';
 
-const KEY = 'board';   // fresh key (drops the throwaway deploy-verification entry)
 const MAX = 50;
 
 const cleanName = (s) =>
   (String(s == null ? '' : s).replace(/[^\w !?.\-]/g, '').trim().slice(0, 12).toUpperCase() || 'BURD');
 const validScore = (n) => Number.isFinite(n) && n >= 0 && n <= 1e9;
+// Each level keeps its own board under `board:<level>`. Sanitise the level so a
+// crafted value can't reach outside the leaderboard store's keyspace.
+const cleanLevel = (s) => (String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 24) || 'beach');
+// Beach keeps the original 'board' key so its existing global scores survive;
+// the new levels get their own per-level boards.
+const boardKey = (level) => { const l = cleanLevel(level); return l === 'beach' ? 'board' : `board:${l}`; };
 
 export default async (req) => {
   // Strong consistency so a read always sees the latest write — closes the
@@ -22,7 +27,8 @@ export default async (req) => {
   const store = getStore({ name: 'leaderboard', consistency: 'strong' });
 
   if (req.method === 'GET') {
-    const scores = (await store.get(KEY, { type: 'json' })) || [];
+    const url = new URL(req.url);
+    const scores = (await store.get(boardKey(url.searchParams.get('level')), { type: 'json' })) || [];
     return Response.json({ scores });
   }
 
@@ -33,6 +39,7 @@ export default async (req) => {
     const score = Math.round(Number(body.score));
     if (!validScore(score)) return new Response('bad score', { status: 400 });
 
+    const KEY = boardKey(body.level);
     const entry = {
       id: String(body.id || crypto.randomUUID()).slice(0, 64),
       name: cleanName(body.name),

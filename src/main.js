@@ -1,10 +1,11 @@
 import * as THREE from 'three';
-import { buildWorld, TargetManager, COURSE_HALF } from './world.js';
+import { TargetManager, COURSE_HALF } from './world.js';
 import { buildSeagull, buildPoop, buildFireball } from './models.js';
 import { Input } from './input.js';
 import { Audio } from './audio.js';
 import { Effects, buildReticle, buildBirdShadow, buildSuperAura, buildFireAura } from './effects.js';
 import { getName, fetchScores, submitScore, flushPending, cachedScores } from './scores.js';
+import { LEVELS, LEVELS_BY_ID, DEFAULT_LEVEL } from './levels.js';
 
 // Render a few flap frames of the actual seagull to transparent PNG sprites,
 // used for the two birds that orbit the menu logo. One-off, on a throwaway
@@ -48,6 +49,20 @@ const MAX_ALT = 56;
 const FORWARD_YAW = Math.PI; // heading is locked forward down the straightaway (-Z)
 const ROUND_TIME = 30;       // seconds
 
+// ----- circuit levels (wedding / concert) -----
+// The bird flies itself along the venue's long axis and the player only steers
+// altitude. Turds are thrown a shorter, steeper distance than on the beach so
+// the drop lands close ahead of the bird as it passes over the packed crowd.
+const CIRCUIT_THROW = 22;    // forward launch speed for circuit drops (vs ~37 on the beach)
+const TURN_TIME = 1.35;      // seconds for the scripted U-turn at each end of a pass
+
+// ----- splash multi-hit -----
+// A fully-charged / super turd splashes a whole cluster. BLAST is the extra
+// radius (beyond a target's own catch radius) within which neighbours also get
+// splatted. It scales with turd size, so only the big ones rack up the multis.
+const BLAST_PER = 1.7;       // blast radius added per unit of turd scale over 1
+const BLAST_MAX = 16;        // cap on how many targets one drop can splat
+
 // Reticle hone: it starts big and tightens to the firing size as the shot lines
 // up on a target, so the size itself tells you when to release.
 const RET_BIG = 3.0;         // 3x oversized when nothing is lined up
@@ -86,7 +101,16 @@ class Game {
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(62, 1, 0.1, 800);
 
-    this.world = buildWorld(this.scene, this.renderer);
+    // ----- level selection -----
+    // The player picks a level on the menu; each keeps its own high score. The
+    // beach world doubles as the menu backdrop until a level is chosen.
+    this.levels = LEVELS;
+    this.levelId = DEFAULT_LEVEL;
+    this.level = LEVELS_BY_ID[this.levelId];
+    this.levelMode = this.level.mode;
+    this.world = null;
+    this.builtLevel = null;
+    this._buildWorldFor(this.levelId);
 
     // player bird
     const gull = buildSeagull();
@@ -118,6 +142,11 @@ class Game {
     this.pitch = 0;
     this.roll = 0;
 
+    // circuit-flight state (wedding / concert auto-pilot loops)
+    this.circuitDir = -1;  // -1 heading toward the front (-Z), +1 heading back (+Z)
+    this.turning = false;
+    this.turnT = 0;
+
     // charge / bullseye cue
     this._bullseyeReady = false;
     this._retScale = 1;
@@ -144,7 +173,14 @@ class Game {
     this.hits = 0;
     this.bullseyes = 0;
     this.timeLeft = ROUND_TIME;
-    this.best = parseInt(localStorage.getItem('gulldump_best') || '0', 10);
+    // Per-level high scores. The old single key seeds the beach best so existing
+    // players keep their record.
+    this.bests = {};
+    for (const l of this.levels) {
+      const legacy = l.id === 'beach' ? localStorage.getItem('gulldump_best') : null;
+      this.bests[l.id] = parseInt(localStorage.getItem(this._bestKey(l.id)) || legacy || '0', 10);
+    }
+    this.best = this.bests[this.levelId];
 
     // dom
     this.dom = {
@@ -172,6 +208,9 @@ class Game {
       goBullseyes: document.getElementById('goBullseyes'),
       goBlurb: document.getElementById('goBlurb'),
       menuBest: document.getElementById('menuBest'),
+      levelPick: document.getElementById('levelPick'),
+      howTo: document.getElementById('howTo'),
+      menuBoardTitle: document.getElementById('menuBoardTitle'),
       goTitle: document.getElementById('goTitle'),
       logoStage: document.getElementById('logoStage'),
       menuBoardList: document.getElementById('menuBoardList'),
@@ -180,9 +219,10 @@ class Game {
       submitScoreBtn: document.getElementById('submitScoreBtn'),
     };
     this.dom.menuBest.textContent = this.best;
+    this._initLevelPicker();
 
     // leaderboard state
-    this._lbScores = cachedScores();
+    this._lbScores = cachedScores(this.levelId);
     this._goScore = 0;
     this._submitted = false;
     this._myId = null;
@@ -203,6 +243,87 @@ class Game {
     const start = () => { this.audio.unlock(); this.startRound(); };
     document.getElementById('playBtn').addEventListener('click', start);
     document.getElementById('againBtn').addEventListener('click', start);
+    const menuBtn = document.getElementById('menuBtn');
+    if (menuBtn) menuBtn.addEventListener('click', () => this._showMenu());
+  }
+
+  // Return from the game-over screen to the menu so a different level can be
+  // picked. The last-played venue stays as the backdrop.
+  _showMenu() {
+    this.state = 'menu';
+    this.input.setEnabled(false);
+    this._camLookAt = null;
+    this.dom.gameover.classList.add('hidden');
+    this.dom.hud.classList.add('hidden');
+    this.dom.menu.classList.remove('hidden');
+    this.dom.menuBest.textContent = this.bests[this.levelId];
+    this._renderMenuBoard();
+  }
+
+  _bestKey(id) { return `burds_best_${id}`; }
+
+  // (Re)build the scene world for a level, tearing the previous one down. The
+  // bird, reticle, shadow and auras live outside the world root, so they persist.
+  _buildWorldFor(id) {
+    if (this.builtLevel === id) return;
+    if (this.world && this.world.dispose) this.world.dispose();
+    const lvl = LEVELS_BY_ID[id] || LEVELS_BY_ID[DEFAULT_LEVEL];
+    this.world = lvl.build(this.scene, this.renderer);
+    this.builtLevel = id;
+  }
+
+  // Build the row of level chips on the menu and wire up selection.
+  _initLevelPicker() {
+    const pick = this.dom.levelPick;
+    if (pick) {
+      pick.innerHTML = '';
+      for (const l of this.levels) {
+        const btn = document.createElement('button');
+        btn.className = 'level-chip' + (l.id === this.levelId ? ' selected' : '');
+        btn.dataset.level = l.id;
+        btn.innerHTML = `<span class="lc-emoji">${l.emoji}</span><span class="lc-name">${l.name}</span>`;
+        btn.addEventListener('click', () => this._selectLevel(l.id));
+        pick.appendChild(btn);
+      }
+    }
+    this._renderHowTo();
+  }
+
+  _renderHowTo() {
+    const el = this.dom.howTo;
+    if (!el) return;
+    el.innerHTML = '';
+    for (const row of this.level.howto) {
+      const div = document.createElement('div');
+      div.className = 'howrow';
+      div.innerHTML = `<span class="howicon">${row.icon}</span><span>${row.html}</span>`;
+      el.appendChild(div);
+    }
+  }
+
+  _selectLevel(id) {
+    if (id === this.levelId) return;
+    this.levelId = id;
+    this.level = LEVELS_BY_ID[id];
+    this.levelMode = this.level.mode;
+    this.best = this.bests[id];
+    // chip highlight
+    if (this.dom.levelPick) {
+      for (const c of this.dom.levelPick.children) c.classList.toggle('selected', c.dataset.level === id);
+    }
+    this.dom.menuBest.textContent = this.best;
+    if (this.dom.menuBoardTitle) this.dom.menuBoardTitle.textContent = `🏆 ${this.level.name} Top`;
+    this._renderHowTo();
+    // swap the menu backdrop world to the chosen venue
+    this._buildWorldFor(id);
+    this._camLookAt = null; // let the idle camera re-settle on the new venue
+    // load this level's leaderboard
+    this._lbScores = cachedScores(this.levelId);
+    this._renderMenuBoard();
+    fetchScores(this.levelId).then((s) => {
+      if (this.levelId !== id) return; // a newer selection won
+      this._lbScores = s; this._renderMenuBoard();
+    });
   }
 
   // ---- menu birds: two seagulls orbiting the logo (in front, then behind) ----
@@ -257,12 +378,13 @@ class Game {
     this.dom.nameInput.addEventListener('input', () => {
       if (this.state === 'gameover' && !this._submitted) this._renderGoBoard();
     });
+    if (this.dom.menuBoardTitle) this.dom.menuBoardTitle.textContent = `🏆 ${this.level.name} Top`;
     // render whatever we have cached immediately, then refresh from the server
     this._renderMenuBoard();
-    fetchScores().then((s) => { this._lbScores = s; this._renderMenuBoard(); if (this.state === 'gameover') this._renderGoBoard(); });
+    fetchScores(this.levelId).then((s) => { this._lbScores = s; this._renderMenuBoard(); if (this.state === 'gameover') this._renderGoBoard(); });
     flushPending();
     window.addEventListener('online', () => {
-      flushPending().then(() => fetchScores()).then((s) => { this._lbScores = s; this._renderMenuBoard(); });
+      flushPending().then(() => fetchScores(this.levelId)).then((s) => { this._lbScores = s; this._renderMenuBoard(); });
     });
   }
 
@@ -308,7 +430,7 @@ class Game {
   _submitScore() {
     if (this._submitted) return;
     const name = (this.dom.nameInput.value || '').trim() || 'BURD';
-    const { list, entry } = submitScore(name, this._goScore, (merged) => {
+    const { list, entry } = submitScore(name, this._goScore, this.levelId, (merged) => {
       this._lbScores = merged;
       this._renderGoBoard();
       this._renderMenuBoard();
@@ -332,15 +454,30 @@ class Game {
 
   // ---------------------------------------------------------------
   startRound() {
+    this.level = LEVELS_BY_ID[this.levelId];
+    this.levelMode = this.level.mode;
+    this.best = this.bests[this.levelId];
+    this._buildWorldFor(this.levelId);
+
     this.score = 0;
     this.combo = 0;
     this.hits = 0;
     this.bullseyes = 0;
     this.timeLeft = ROUND_TIME;
-    this.pos.set(0, 32, 0);
-    this.yaw = FORWARD_YAW;
+    // Position the bird for the level's flight model.
+    if (this.levelMode === 'circuit') {
+      const c = this.level.circuit;
+      this.pos.set(0, 30, c.startZ);
+      this.circuitDir = -1;           // head toward the front (-Z) first
+      this.yaw = Math.PI;
+      this.turning = false; this.turnT = 0;
+    } else {
+      this.pos.set(0, 32, 0);
+      this.yaw = FORWARD_YAW;
+    }
     this.pitch = 0;
     this.roll = 0;
+    this._camLookAt = null;
     this.timeScale = 1; this.targetTimeScale = 1; this.btActive = false;
     this.superTimer = 0; this.superSpin = 0; this.superStack = 0; this.fireMode = false;
     this.superAura.group.visible = false;
@@ -352,7 +489,7 @@ class Game {
     this.dom.turdCam.classList.add('hidden');
     if (this.poop) { this.scene.remove(this.poop.group); this.poop = null; }
     this.effects.clearDecals();
-    this.targets.reset(this.pos);
+    this.targets.reset(this.pos, this.level);
     this.input.setEnabled(true);
 
     this.dom.score.textContent = '0';
@@ -369,7 +506,12 @@ class Game {
   endRound() {
     this.state = 'gameover';
     this.input.setEnabled(false);
-    if (this.score > this.best) { this.best = this.score; localStorage.setItem('gulldump_best', this.best); }
+    if (this.score > (this.bests[this.levelId] || 0)) {
+      this.bests[this.levelId] = this.score;
+      localStorage.setItem(this._bestKey(this.levelId), this.score);
+      if (this.levelId === 'beach') localStorage.setItem('gulldump_best', this.score); // legacy key
+    }
+    this.best = this.bests[this.levelId];
     this.dom.finalScore.textContent = this.score;
     this.dom.goHits.textContent = this.hits;
     this.dom.goBest.textContent = this.best;
@@ -385,7 +527,7 @@ class Game {
     this.dom.submitScoreBtn.disabled = this.score <= 0;
     this.dom.submitScoreBtn.textContent = 'SUBMIT';
     this._renderGoBoard();
-    fetchScores().then((s) => { this._lbScores = s; if (this.state === 'gameover') this._renderGoBoard(); this._renderMenuBoard(); });
+    fetchScores(this.levelId).then((s) => { this._lbScores = s; if (this.state === 'gameover') this._renderGoBoard(); this._renderMenuBoard(); });
 
     this.dom.hud.classList.add('hidden');
     this.dom.gameover.classList.remove('hidden');
@@ -394,6 +536,17 @@ class Game {
   _blurb() {
     if (this.score === 0) return 'A clean record. Disappointing.';
     if (this.bullseyes >= 5) return 'Sniper of the skies. 🎯';
+    const big = this.hits >= 20, mid = this.hits >= 10;
+    if (this.levelId === 'wedding') {
+      if (big) return 'You absolutely ruined their special day. 💍';
+      if (mid) return 'Objection! Sustained, all over the guests.';
+      return 'A few guests will need dry cleaning.';
+    }
+    if (this.levelId === 'concert') {
+      if (big) return 'The whole pit got mosh-splatted. 🤘';
+      if (mid) return 'Encore! The crowd is drenched.';
+      return 'A solid set of splats.';
+    }
     if (this.hits >= 12) return 'A reign of terror over the boardwalk!';
     if (this.hits >= 6) return 'Solid bombing run, captain.';
     return 'Not bad for a beach bird.';
@@ -406,7 +559,10 @@ class Game {
   // releasing on the beat, not about charging range.
   _launchVel() {
     const fwd = new THREE.Vector3(Math.sin(this.yaw), 0, Math.cos(this.yaw));
-    const v = fwd.clone().multiplyScalar(BIRD_SPEED + FIRE_POWER * POWER_SPEED);
+    // Circuit levels throw shorter+steeper so the drop lands just ahead of the
+    // bird as it passes over the packed crowd; the beach keeps its long lob.
+    const fwdSpeed = this.levelMode === 'circuit' ? CIRCUIT_THROW : (BIRD_SPEED + FIRE_POWER * POWER_SPEED);
+    const v = fwd.clone().multiplyScalar(fwdSpeed);
     v.y = Math.sin(this.pitch) * BIRD_SPEED - 1.5; // small initial downward
     return v;
   }
@@ -443,6 +599,11 @@ class Game {
   _turdCatch(power) {
     return Math.max(0, this._turdScale(power) - 1) * TURD_FOOTPRINT;
   }
+  // Splash radius: how far beyond a target's own catch radius a turd also splats
+  // neighbours. Grows with turd size, so only big / super turds rack up multis.
+  _turdBlast(power) {
+    return Math.max(0, this._turdScale(power) - 1) * BLAST_PER;
+  }
   // Score multiplier while super mode is active: 1.5x, +0.5x per stack (2x, 2.5x…).
   _superScoreMult() {
     return this.superStack > 0 ? 1 + 0.5 * this.superStack : 1;
@@ -455,6 +616,7 @@ class Game {
     const group = fire ? buildFireball() : buildPoop();
     const turdScale = this._turdScale(power);
     const catchR = this._turdCatch(power);
+    const blast = this._turdBlast(power);
     group.scale.setScalar(turdScale);
     group.position.copy(p0);
     this.scene.add(group);
@@ -462,61 +624,77 @@ class Game {
     // (rather than Euler) means the predicted-landing reticle is truthful.
     const landing = this._predictLanding(p0, v0) || p0.clone();
     // Pre-compute which target (if any) this poop will hit, and exactly when it
-    // reaches that target's height — used to time the slow-mo lead-in.
+    // reaches that target's height — used to time the slow-mo lead-in. Bullet
+    // time is a beach flourish; the fast circuit levels skip it.
     let btTarget = null, tImpact = Infinity;
-    for (const tg of this.targets.targets) {
-      if (!tg.alive) continue;
-      const d = Math.hypot(landing.x - tg.group.position.x, landing.z - tg.group.position.z);
-      // A generous BT_CATCH (vs. the tighter hit radius) means even near-misses
-      // sailing close past a victim earn the slow-mo flourish.
-      if (d <= tg.radius + BT_CATCH + catchR) {
-        const t = this._timeToHeight(p0.y, v0.y, tg.hitY);
-        if (t !== null && t < tImpact) { tImpact = t; btTarget = tg; }
+    if (this.levelMode !== 'circuit') {
+      for (const tg of this.targets.targets) {
+        if (!tg.alive) continue;
+        const d = Math.hypot(landing.x - tg.group.position.x, landing.z - tg.group.position.z);
+        // A generous BT_CATCH (vs. the tighter hit radius) means even near-misses
+        // sailing close past a victim earn the slow-mo flourish.
+        if (d <= tg.radius + BT_CATCH + catchR) {
+          const t = this._timeToHeight(p0.y, v0.y, tg.hitY);
+          if (t !== null && t < tImpact) { tImpact = t; btTarget = tg; }
+        }
       }
     }
-    this.poop = { group, p0: p0.clone(), v0: v0.clone(), t: 0, pos: p0.clone(), vel: v0.clone(), prevY: p0.y, landing, btTarget, tImpact, power, turdScale, catch: catchR, fire, spin: 0 };
+    this.poop = { group, p0: p0.clone(), v0: v0.clone(), t: 0, pos: p0.clone(), vel: v0.clone(), prevY: p0.y, landing, btTarget, tImpact, power, turdScale, catch: catchR, blast, fire, spin: 0 };
     this.input.setEnabled(false);
     this.audio.poop();
     this.audio.whoosh();
   }
 
-  resolvePoop(hit, target, acc, impact) {
+  // Resolve a landed drop. `hits` is the list of targets caught in the splash
+  // (empty = a clean miss); each entry is { tg, acc }. A big charged / super
+  // turd packs the list with neighbours, so one drop can rack up a huge combo.
+  resolveDrop(hits, primary, impact) {
     const p = this.poop;
-    const big = acc >= BULLSEYE_ACC;
     const where = impact || p.pos;
-    // the flat ground splat stays for every drop (lava-coloured for fireballs)...
-    this.effects.splat(where, hit && big, p.turdScale, p.fire);
-    // ...and a target hit gets an extra splash on top.
-    if (hit) this.effects.splash(where, p.turdScale, p.fire);
+    const bestAcc = hits.length ? Math.max(...hits.map((h) => h.acc)) : 0;
+    const big = bestAcc >= BULLSEYE_ACC;
+    // flat ground splat (lava-coloured for fireballs)...
+    this.effects.splat(where, big, p.turdScale, p.fire);
+    // ...plus one splash scaled up by how many got caught.
+    if (hits.length) this.effects.splash(where, p.turdScale * Math.min(2.4, 0.85 + 0.28 * hits.length), p.fire);
     this.scene.remove(p.group);
 
-    if (hit) {
-      this.hits++;
-      this.combo++;
-      let tier, mult;
-      if (acc >= BULLSEYE_ACC) { tier = 'BULLSEYE!'; mult = 3; this.bullseyes++; this.audio.bullseye(); }
-      else if (acc >= DIRECT_ACC) { tier = 'DIRECT HIT!'; mult = 2; this.audio.splat(true); }
-      else { tier = 'SPLAT!'; mult = 1.3; this.audio.splat(false); }
-
-      const base = Math.round(target.value * mult);
-      const comboMult = 1 + (this.combo - 1) * 0.5;
-      // SUPER TURD MODE layers a points multiplier (1.5x, 2x, 2.5x… per stack) on top
-      const gain = Math.round(base * comboMult * this._superScoreMult());
+    if (hits.length) {
+      // best hit first so the toast/audio reflect the cleanest splat
+      hits.sort((a, b) => b.acc - a.acc);
+      let gain = 0, bestTier = 'SPLAT!', superHit = false;
+      for (const h of hits) {
+        this.hits++;
+        this.combo++;
+        let tier, mult;
+        if (h.acc >= BULLSEYE_ACC) { tier = 'BULLSEYE!'; mult = 3; this.bullseyes++; }
+        else if (h.acc >= DIRECT_ACC) { tier = 'DIRECT HIT!'; mult = 2; }
+        else { tier = 'SPLAT!'; mult = 1.3; }
+        if (h === hits[0]) bestTier = tier;
+        const base = Math.round(h.tg.value * mult);
+        const comboMult = 1 + (this.combo - 1) * 0.5;
+        gain += Math.round(base * comboMult * this._superScoreMult());
+        this.targets.kill(h.tg);
+        if (h.tg.special === 'super') superHit = true;
+      }
       this.score += gain;
       this.dom.score.textContent = this.score;
 
-      // reward a clean shot with extra time on the clock
-      this.timeLeft += (acc >= BULLSEYE_ACC) ? TIME_BONUS_BULLSEYE : TIME_BONUS_HIT;
-      const shownTime = Math.ceil(this.timeLeft);
-      this.dom.timer.textContent = shownTime;
+      if (bestAcc >= BULLSEYE_ACC) this.audio.bullseye();
+      else if (bestAcc >= DIRECT_ACC) this.audio.splat(true);
+      else this.audio.splat(false);
+
+      // extra time for a clean shot, plus a touch for each extra victim splashed
+      this.timeLeft += (bestAcc >= BULLSEYE_ACC ? TIME_BONUS_BULLSEYE : TIME_BONUS_HIT) + Math.max(0, hits.length - 1);
+      this.dom.timer.textContent = Math.ceil(this.timeLeft);
       this.dom.timerPill.classList.toggle('warn', this.timeLeft <= 5);
 
-      this._showToast(`${tier} +${gain}`);
+      const prefix = hits.length > 1 ? `×${hits.length} ` : '';
+      this._showToast(`${prefix}${bestTier} +${gain}`);
       this._showCombo();
-      this.targets.kill(target);
 
       // bombing the rare golden super turd activates / stacks SUPER TURD MODE
-      if (target.special === 'super') this._hitSuperTurd();
+      if (superHit) this._hitSuperTurd();
     } else {
       this.combo = 0;
       this.dom.comboPill.classList.remove('show');
@@ -525,7 +703,7 @@ class Game {
     }
 
     // brief slow-mo hold so the splat reads, then restore
-    this.btImpact = (impact || p.pos).clone();
+    this.btImpact = where.clone();
     this.poop = null;
     this.btHold = this.btActive ? 0.5 : 0;
     // ...but never hand control back mid-transformation (the super cinematic owns it)
@@ -640,6 +818,24 @@ class Game {
   }
 
   _idleCamera(dt) {
+    // Circuit venues: hover the bird near the head of the venue and frame the
+    // whole place from out front, so the menu shows off the wedding/concert set.
+    if (this.levelMode === 'circuit' && this.level.circuit) {
+      const c = this.level.circuit;
+      const t = this.clock.elapsedTime;
+      this.pos.set(Math.sin(t * 0.5) * 6, 22, c.frontTurnZ + 8 + Math.sin(t * 0.4) * 2);
+      this.yaw = Math.PI + Math.sin(t * 0.3) * 0.3;
+      this.pitch = 0;
+      this.roll = Math.sin(t * 0.3) * 0.2;
+      this._placeBird();
+      const camPos = new THREE.Vector3(0, 24, c.frontTurnZ - 26);
+      this.camera.position.lerp(camPos, Math.min(1, dt * 2));
+      const focus = new THREE.Vector3(0, 7, (c.frontTurnZ + c.backTurnZ) / 2);
+      this._camLookAt = this._camLookAt || focus.clone();
+      this._camLookAt.lerp(focus, Math.min(1, dt * 2));
+      this.camera.lookAt(this._camLookAt);
+      return;
+    }
     // gentle bird hover + slow orbit for menu backdrop
     this.yaw += dt * 0.15;
     const fwd = new THREE.Vector3(Math.sin(this.yaw), 0, Math.cos(this.yaw));
@@ -660,26 +856,30 @@ class Game {
       if (this.superSpin <= 0 && this.state === 'playing') this.input.setEnabled(true);
     }
 
-    // ---- flight (infinite runner) ----
-    // The heading is locked forward down the lane; the player never turns around.
-    // Steering left/right strafes the bird across a fixed-width corridor, and up/
-    // down dives or climbs. This is the Temple-Run-style straightaway.
-    this.yaw = FORWARD_YAW;
-    const strafe = cinematic ? 0 : this.input.steerX;
-    this.pos.x = THREE.MathUtils.clamp(
-      this.pos.x + strafe * STRAFE_SPEED * dt, -COURSE_HALF, COURSE_HALF,
-    );
+    // ---- flight ----
+    if (this.levelMode === 'circuit') {
+      // Circuit venues fly themselves back and forth; the player only steers
+      // altitude (and when/how-big to drop).
+      this._circuitFlight(dt, dtReal, cinematic);
+    } else {
+      // Infinite runner: heading locked forward down the lane; steering
+      // strafes across a fixed corridor and dives/climbs, never turning around.
+      this.yaw = FORWARD_YAW;
+      const strafe = cinematic ? 0 : this.input.steerX;
+      this.pos.x = THREE.MathUtils.clamp(
+        this.pos.x + strafe * STRAFE_SPEED * dt, -COURSE_HALF, COURSE_HALF,
+      );
 
-    // pitch toward steer target; roll banks visually into the strafe
-    const targetPitch = cinematic ? 0 : this.input.steerY * 0.5;
-    this.pitch += (targetPitch - this.pitch) * Math.min(1, dt * 5);
-    this.roll += (-strafe * 0.6 - this.roll) * Math.min(1, dtReal * 6);
+      // pitch toward steer target; roll banks visually into the strafe
+      const targetPitch = cinematic ? 0 : this.input.steerY * 0.5;
+      this.pitch += (targetPitch - this.pitch) * Math.min(1, dt * 5);
+      this.roll += (-strafe * 0.6 - this.roll) * Math.min(1, dtReal * 6);
 
-    const fwd = new THREE.Vector3(Math.sin(this.yaw), 0, Math.cos(this.yaw));
-    this.pos.addScaledVector(fwd, BIRD_SPEED * dt);
-    this.pos.y += Math.sin(this.pitch) * BIRD_SPEED * dt;
-    if (this.pos.y < MIN_ALT) { this.pos.y = MIN_ALT; if (this.pitch < 0) this.pitch = 0; }
-    if (this.pos.y > MAX_ALT) { this.pos.y = MAX_ALT; if (this.pitch > 0) this.pitch = 0; }
+      const fwd = new THREE.Vector3(Math.sin(this.yaw), 0, Math.cos(this.yaw));
+      this.pos.addScaledVector(fwd, BIRD_SPEED * dt);
+      this.pos.y += Math.sin(this.pitch) * BIRD_SPEED * dt;
+      this._clampAlt();
+    }
 
     this._placeBird();
     const flapInt = 0.6 + Math.abs(this.input.steerY) * 0.6 + this.input.charge * 0.3;
@@ -748,6 +948,58 @@ class Game {
     }
   }
 
+  _clampAlt() {
+    if (this.pos.y < MIN_ALT) { this.pos.y = MIN_ALT; if (this.pitch < 0) this.pitch = 0; }
+    if (this.pos.y > MAX_ALT) { this.pos.y = MAX_ALT; if (this.pitch > 0) this.pitch = 0; }
+  }
+
+  // Circuit auto-pilot: the bird flies the venue's long axis at a constant
+  // speed, the player only climbs/dives. At each end it runs a short scripted
+  // U-turn (sweep the heading 180°, bulge out and back to centre, ease through
+  // a stop) so it loops past the couple/band, back past the crowd, forever.
+  _circuitFlight(dt, dtReal, cinematic) {
+    const c = this.level.circuit;
+    const targetPitch = cinematic ? 0 : this.input.steerY * 0.5;
+    this.pitch += (targetPitch - this.pitch) * Math.min(1, dt * 5);
+
+    if (this.turning) {
+      this.turnT += dtReal;
+      const u = Math.min(1, this.turnT / TURN_TIME);
+      const pr = u * u * (3 - 2 * u);                 // smoothstep
+      this.yaw = this._turnYawFrom + Math.PI * pr;    // sweep through 180°
+      this.pos.x = Math.sin(pr * Math.PI) * c.bulge * this._turnSide;
+      this.pos.z += this._turnDir * BIRD_SPEED * Math.cos(pr * Math.PI) * dt; // nose past, then back
+      this.roll = Math.sin(pr * Math.PI) * 0.6 * this._turnSide;
+      this.pos.y += Math.sin(this.pitch) * BIRD_SPEED * dt;
+      this._clampAlt();
+      if (this.turnT >= TURN_TIME) {
+        this.turning = false;
+        this.circuitDir = -this.circuitDir;
+        this.yaw = this.circuitDir < 0 ? Math.PI : 0;
+        this.pos.x = 0; this.roll = 0;
+      }
+      return;
+    }
+
+    this.yaw = this.circuitDir < 0 ? Math.PI : 0;
+    this.pos.x += (0 - this.pos.x) * Math.min(1, dt * 4);     // settle on the centreline
+    this.roll += (0 - this.roll) * Math.min(1, dtReal * 6);
+    const fwd = new THREE.Vector3(Math.sin(this.yaw), 0, Math.cos(this.yaw));
+    this.pos.addScaledVector(fwd, BIRD_SPEED * dt);
+    this.pos.y += Math.sin(this.pitch) * BIRD_SPEED * dt;
+    this._clampAlt();
+    if (this.circuitDir < 0 && this.pos.z <= c.frontTurnZ) this._beginTurn();
+    else if (this.circuitDir > 0 && this.pos.z >= c.backTurnZ) this._beginTurn();
+  }
+
+  _beginTurn() {
+    this.turning = true;
+    this.turnT = 0;
+    this._turnYawFrom = this.yaw;
+    this._turnDir = this.circuitDir;
+    this._turnSide = this.circuitDir < 0 ? 1 : -1; // bulge outward (alternates each end → no net drift)
+  }
+
   // The super-Saiyan camera: one full orbit around the bird over the cinematic,
   // bird heading dead ahead the whole time. Set directly (not lerped) so the
   // revolution is crisp; ends behind the bird so the chase cam resumes smoothly.
@@ -791,7 +1043,7 @@ class Game {
     this.reticle.visible = true;
     this.reticle.position.set(land.x, 0.16, land.z);
 
-    // Predicted accuracy against the nearest target — mirrors resolvePoop (incl.
+    // Predicted accuracy against the nearest target — mirrors resolveDrop (incl.
     // the turd-size catch bonus) so the reticle's promise matches the real shot.
     const power = this.input.charging ? this.input.charge : 0;
     const catchR = this._turdCatch(power);
@@ -868,27 +1120,34 @@ class Game {
       this.audio.slowmo();
     }
 
-    // Collision uses the poop's predicted GROUND landing vs the target's ground
+    // Collision uses the poop's predicted GROUND landing vs each target's ground
     // position, so accuracy matches exactly what the reticle showed the player.
-    // We trigger the impact once the poop has descended to the target's height.
+    // Everything inside the (size-scaled) blast radius gets splatted; the closest
+    // target is the "primary" whose height triggers the impact.
     if (p.vel.y < 0) {
-      let best = null, bestD = Infinity;
+      let prim = null, primD = Infinity;
+      const cand = [];
       for (const tg of this.targets.targets) {
         if (!tg.alive) continue;
-        if (p.pos.y > tg.hitY + 0.4) continue; // not down to their level yet
         const dx = p.landing.x - tg.group.position.x;
         const dz = p.landing.z - tg.group.position.z;
         const d = Math.hypot(dx, dz);
-        // A bigger turd splats over a wider area, widening the catch radius.
-        if (d <= tg.radius + HIT_PAD + p.catch && d < bestD) { bestD = d; best = tg; }
+        if (d <= tg.radius + HIT_PAD + p.blast) {
+          cand.push({ tg, d });
+          if (d < primD) { primD = d; prim = tg; }
+        }
       }
-      if (best) {
-        // Accuracy ramps from 1 at dead-centre to 0 at the edge of the (padded)
-        // catch radius, so a wider sweet spot now counts as a bullseye.
-        const acc = THREE.MathUtils.clamp(1 - bestD / (best.radius + HIT_PAD + p.catch), 0, 1);
-        const impact = best.group.position.clone(); impact.y = best.hitY;
+      if (prim && p.pos.y <= prim.hitY + 0.4) {
+        let list = cand;
+        if (list.length > BLAST_MAX) list = cand.slice().sort((a, b) => a.d - b.d).slice(0, BLAST_MAX);
+        // Accuracy ramps from 1 at dead-centre to 0 at the edge of the (tight)
+        // catch radius — neighbours grazed by the splash come in as low-acc SPLATs.
+        const hits = list.map(({ tg, d }) => ({
+          tg, acc: THREE.MathUtils.clamp(1 - d / (tg.radius + HIT_PAD + p.catch), 0, 1),
+        }));
+        const impact = prim.group.position.clone(); impact.y = prim.hitY;
         p.pos.copy(impact);
-        this.resolvePoop(true, best, acc, impact);
+        this.resolveDrop(hits, prim, impact);
         return;
       }
     }
@@ -896,7 +1155,7 @@ class Game {
     // hit the ground => miss
     if (p.pos.y <= 0.15) {
       p.pos.y = 0.12;
-      this.resolvePoop(false, null, 0, p.pos.clone());
+      this.resolveDrop([], null, p.pos.clone());
     }
   }
 

@@ -9,7 +9,7 @@
  *   activate, takes control, and the page reloads onto the new build.
  *   That's the whole "push changes when the user regains internet" story.
  */
-const CACHE_VERSION = 'v10';
+const CACHE_VERSION = 'v11';
 const CACHE_NAME = `burds-${CACHE_VERSION}`;
 
 // Everything needed to boot and play with zero network.
@@ -27,6 +27,7 @@ const ASSETS = [
   './src/main.js',
   './src/world.js',
   './src/models.js',
+  './src/levels.js',
   './src/input.js',
   './src/audio.js',
   './src/effects.js',
