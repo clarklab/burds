@@ -181,7 +181,7 @@ const sup = await page.evaluate(async () => {
   g.firePoop(1, { bt: true });
   out.poopIsFire = !!(g.poops[0] && g.poops[0].fire);
   out.timerWasAdded = out.timerAfterStack > t1;
-  // scatter fires a whole volley of pellets at once
+  // scatter fires a whole grid of pellets at once (2/3/3/2 = 10)
   for (const pp of g.poops) g.scene.remove(pp.group); g.poops = [];
   g.weaponMode = 'scatter';
   g._fireScatter(0.5);
@@ -210,8 +210,8 @@ if (!(sup.stack3 === 3 && sup.pickerOpen && sup.pickerVisible)) {
 if (!(sup.weaponMode === 'fire' && sup.fireAura && sup.badgeFire && sup.poopIsFire && sup.bonusAdded)) {
   throw new Error('Choosing FIRE did not apply fire mode + bonus: ' + JSON.stringify(sup));
 }
-if (sup.scatterCount !== 5) {
-  throw new Error('Scatter did not fire a 5-pellet volley: ' + JSON.stringify(sup));
+if (sup.scatterCount !== 10) {
+  throw new Error('Scatter did not fire a 10-pellet grid volley: ' + JSON.stringify(sup));
 }
 
 // --- charging finger can steer: hold the poop button and drag, and steerX
