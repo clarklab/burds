@@ -1002,8 +1002,13 @@ class Game {
     const c = this.level.circuit;
     const half = c.halfWidth || 12;
     const strafe = cinematic ? 0 : this.input.steerX;
-    // strafe across the venue + dive ride on top of the auto forward/loop motion
-    this.pos.x = THREE.MathUtils.clamp(this.pos.x + strafe * STRAFE_SPEED * dt, -half, half);
+    // Map "drag right" to the bird's on-screen right, not a fixed world axis.
+    // The circuit doubles back, so on the return leg the camera faces the other
+    // way — without this the lateral steering inverts coming back. The camera's
+    // right vector has world-x component -cos(yaw) (±1 on the straights), which
+    // also eases lateral authority to zero mid-turn as the bird points sideways.
+    const dirX = -Math.cos(this.yaw);
+    this.pos.x = THREE.MathUtils.clamp(this.pos.x + strafe * dirX * STRAFE_SPEED * dt, -half, half);
     const targetPitch = cinematic ? 0 : this.input.steerY * 0.5;
     this.pitch += (targetPitch - this.pitch) * Math.min(1, dt * 5);
 
