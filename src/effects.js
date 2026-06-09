@@ -168,6 +168,78 @@ export function buildReticle() {
   return g;
 }
 
+// The super-Saiyan aura: a pulsing golden energy shell, an upward flame, and a
+// crackle of lightning bolts. Returned as a group meant to be parented to the
+// bird; call update(dt, intensity) each frame while it's visible.
+export function buildSuperAura() {
+  const group = new THREE.Group();
+
+  const shell = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(3.4, 1),
+    new THREE.MeshBasicMaterial({ color: 0xffe24a, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }),
+  );
+  group.add(shell);
+
+  const flame = new THREE.Mesh(
+    new THREE.ConeGeometry(2.2, 6, 12, 1, true),
+    new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, depthWrite: false }),
+  );
+  flame.position.y = 2.0;
+  group.add(flame);
+
+  const SEG = 6, BOLTS = 7;
+  const bolts = [];
+  for (let i = 0; i < BOLTS; i++) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array((SEG + 1) * 3), 3));
+    const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false }));
+    group.add(line);
+    bolts.push(line);
+  }
+
+  // Re-jag every bolt into a fresh forking arc around the bird.
+  function regen() {
+    for (const line of bolts) {
+      const pos = line.geometry.attributes.position;
+      const ang = Math.random() * Math.PI * 2;
+      const rad = 1.2 + Math.random() * 1.3;
+      const top = 2 + Math.random() * 4;
+      for (let s = 0; s <= SEG; s++) {
+        const f = s / SEG;
+        const r = rad * (1 - f * 0.3);
+        pos.setXYZ(s,
+          Math.cos(ang) * r + (Math.random() - 0.5) * 0.7,
+          -1 + f * top + (Math.random() - 0.5) * 0.5,
+          Math.sin(ang) * r + (Math.random() - 0.5) * 0.7,
+        );
+      }
+      pos.needsUpdate = true;
+    }
+  }
+  regen();
+
+  let t = 0, flick = 0;
+  function update(dt, intensity = 1) {
+    t += dt; flick += dt;
+    const pulse = 0.5 + 0.5 * Math.sin(t * 22);
+    shell.material.opacity = (0.12 + 0.2 * intensity) * (0.5 + 0.5 * pulse);
+    shell.scale.setScalar(1 + 0.06 * pulse * intensity);
+    flame.material.opacity = (0.1 + 0.18 * intensity) * pulse;
+    flame.rotation.y += dt * 3;
+    if (flick > 0.045) {
+      flick = 0;
+      regen();
+      const showN = Math.round(bolts.length * (0.4 + 0.6 * intensity));
+      bolts.forEach((b, i) => { b.visible = i < showN && Math.random() < 0.85; });
+    }
+    const bo = 0.6 + 0.4 * intensity;
+    for (const b of bolts) b.material.opacity = bo * (0.6 + 0.4 * Math.random());
+  }
+
+  group.visible = false;
+  return { group, update };
+}
+
 // A soft round shadow that follows the bird.
 export function buildBirdShadow() {
   const m = new THREE.Mesh(

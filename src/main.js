@@ -3,7 +3,7 @@ import { buildWorld, TargetManager, COURSE_HALF } from './world.js';
 import { buildSeagull, buildPoop } from './models.js';
 import { Input } from './input.js';
 import { Audio } from './audio.js';
-import { Effects, buildReticle, buildBirdShadow } from './effects.js';
+import { Effects, buildReticle, buildBirdShadow, buildSuperAura } from './effects.js';
 
 // ----- tuning constants -----
 const BIRD_SPEED = 24;       // constant forward flight speed down the lane
@@ -22,6 +22,12 @@ const RET_BIG = 3.0;         // 3x oversized when nothing is lined up
 const RET_FIRE = 0.6;        // final firing size when a hit is dialled in
 
 const BT_LEAD = 0.5;         // sim-seconds before impact to start slow-mo (earlier = more drama)
+
+// ----- SUPER TURD MODE -----
+const SUPER_TIME = 15;       // seconds of giant turds after grabbing a super turd
+const SUPER_SPIN_TIME = 1.8; // length of the camera-orbit transformation cinematic
+const SUPER_TURD_MULT = 2.5; // turd size multiplier while super mode is active
+const TURD_FOOTPRINT = 0.7;  // extra catch radius per unit of turd scale over 1 (bigger turd = easier hit)
 
 // ----- scoring / hit feel -----
 const HIT_PAD = 0.6;         // horizontal slack added to a target's catch radius (more forgiving hits)
@@ -55,6 +61,10 @@ class Game {
     this.birdShadow = buildBirdShadow();
     this.scene.add(this.birdShadow);
 
+    // super-Saiyan aura rides on the bird, hidden until SUPER TURD MODE
+    this.superAura = buildSuperAura();
+    this.bird.add(this.superAura.group);
+
     this.reticle = buildReticle();
     this.scene.add(this.reticle);
 
@@ -83,6 +93,10 @@ class Game {
     this.btActive = false;
     this.btHold = 0;
 
+    // super turd mode
+    this.superTimer = 0;   // seconds of giant-turd mode remaining
+    this.superSpin = 0;    // seconds of transformation cinematic remaining
+
     // round
     this.state = 'menu';
     this.score = 0;
@@ -107,6 +121,8 @@ class Game {
       chargeFg: document.querySelector('.charge-fg'),
       poopBtn: document.getElementById('poopBtn'),
       turdCam: document.getElementById('turdCam'),
+      superBadge: document.getElementById('superBadge'),
+      superTime: document.getElementById('superTime'),
       finalScore: document.getElementById('finalScore'),
       goHits: document.getElementById('goHits'),
       goBest: document.getElementById('goBest'),
@@ -152,6 +168,10 @@ class Game {
     this.pitch = 0;
     this.roll = 0;
     this.timeScale = 1; this.targetTimeScale = 1; this.btActive = false;
+    this.superTimer = 0; this.superSpin = 0;
+    this.superAura.group.visible = false;
+    this.dom.poopBtn.classList.remove('super');
+    this.dom.superBadge.classList.add('hidden');
     this._setBullseyeReady(false);
     this.dom.turdCam.classList.add('hidden');
     if (this.poop) { this.scene.remove(this.poop.group); this.poop = null; }
@@ -219,13 +239,25 @@ class Game {
     return (v0y + Math.sqrt(disc)) / g;
   }
 
+  // Turd size for a given hold power. Holding longer makes a bigger turd; SUPER
+  // TURD MODE multiplies it 2.5x on top.
+  _turdScale(power) {
+    let s = THREE.MathUtils.lerp(0.8, 1.9, power);
+    if (this.superTimer > 0) s *= SUPER_TURD_MULT;
+    return s;
+  }
+  // Extra catch radius a turd of this size grants — a bigger turd splats over a
+  // wider area, so it's easier to hit (and the giant super turds much easier).
+  _turdCatch(power) {
+    return Math.max(0, this._turdScale(power) - 1) * TURD_FOOTPRINT;
+  }
+
   firePoop(power) {
     const p0 = this.pos.clone().add(new THREE.Vector3(0, -0.8, 0));
     const v0 = this._launchVel();
     const group = buildPoop();
-    // Holding longer makes a bigger turd (and thus a bigger splat) — the only
-    // thing the charge now does, since range is fixed.
-    const turdScale = THREE.MathUtils.lerp(0.8, 1.9, power);
+    const turdScale = this._turdScale(power);
+    const catchR = this._turdCatch(power);
     group.scale.setScalar(turdScale);
     group.position.copy(p0);
     this.scene.add(group);
@@ -240,12 +272,12 @@ class Game {
       const d = Math.hypot(landing.x - tg.group.position.x, landing.z - tg.group.position.z);
       // A generous BT_CATCH (vs. the tighter hit radius) means even near-misses
       // sailing close past a victim earn the slow-mo flourish.
-      if (d <= tg.radius + BT_CATCH) {
+      if (d <= tg.radius + BT_CATCH + catchR) {
         const t = this._timeToHeight(p0.y, v0.y, tg.hitY);
         if (t !== null && t < tImpact) { tImpact = t; btTarget = tg; }
       }
     }
-    this.poop = { group, p0: p0.clone(), v0: v0.clone(), t: 0, pos: p0.clone(), vel: v0.clone(), prevY: p0.y, landing, btTarget, tImpact, power, turdScale, spin: 0 };
+    this.poop = { group, p0: p0.clone(), v0: v0.clone(), t: 0, pos: p0.clone(), vel: v0.clone(), prevY: p0.y, landing, btTarget, tImpact, power, turdScale, catch: catchR, spin: 0 };
     this.input.setEnabled(false);
     this.audio.poop();
     this.audio.whoosh();
@@ -284,6 +316,9 @@ class Game {
       this._showToast(`${tier} +${gain}`);
       this._showCombo();
       this.targets.kill(target);
+
+      // bombing the rare golden super turd kicks off SUPER TURD MODE
+      if (target.special === 'super') this._activateSuper();
     } else {
       this.combo = 0;
       this.dom.comboPill.classList.remove('show');
@@ -295,12 +330,39 @@ class Game {
     this.btImpact = (impact || p.pos).clone();
     this.poop = null;
     this.btHold = this.btActive ? 0.5 : 0;
-    if (this.btHold <= 0) {
+    // ...but never hand control back mid-transformation (the super cinematic owns it)
+    if (this.btHold <= 0 && this.superSpin <= 0) {
       // no slow-mo (e.g. a clean miss): reset immediately
       this.targetTimeScale = 1;
       this.btImpact = null;
       if (this.state === 'playing') this.input.setEnabled(true);
     }
+  }
+
+  // Kick off SUPER TURD MODE: the seagull powers up (super-Saiyan camera spin +
+  // lightning + an elated yell), then drops giant 2.5x turds for 15 seconds.
+  _activateSuper() {
+    this.superTimer = SUPER_TIME;
+    this.superSpin = SUPER_SPIN_TIME;
+    // clean-cut into the transformation: drop any bullet-time framing
+    this.btActive = false; this.btHold = 0; this.btImpact = null;
+    this.targetTimeScale = 1;
+    this.input.setEnabled(false);
+    this.superAura.group.visible = true;
+    this.dom.poopBtn.classList.add('super');
+    this.dom.turdCam.classList.add('hidden');
+    this.dom.superBadge.classList.remove('hidden');
+    this.dom.superTime.textContent = SUPER_TIME;
+    this.audio.seagullYell();
+    this.audio.superZap();
+    this._showToast('SUPER TURD MODE! ⚡');
+  }
+
+  _endSuper() {
+    this.superTimer = 0;
+    this.superAura.group.visible = false;
+    this.dom.poopBtn.classList.remove('super');
+    this.dom.superBadge.classList.add('hidden');
   }
 
   _showToast(text, miss = false) {
@@ -355,18 +417,26 @@ class Game {
   _updatePlay(dt, dtReal) {
     this.input.update(dtReal);
 
+    // During the SUPER TURD transformation the camera orbits the bird while it
+    // flies dead ahead — steering and firing are locked out for the cinematic.
+    const cinematic = this.superSpin > 0;
+    if (cinematic) {
+      this.superSpin -= dtReal;
+      if (this.superSpin <= 0 && this.state === 'playing') this.input.setEnabled(true);
+    }
+
     // ---- flight (infinite runner) ----
     // The heading is locked forward down the lane; the player never turns around.
     // Steering left/right strafes the bird across a fixed-width corridor, and up/
     // down dives or climbs. This is the Temple-Run-style straightaway.
     this.yaw = FORWARD_YAW;
-    const strafe = this.input.steerX;
+    const strafe = cinematic ? 0 : this.input.steerX;
     this.pos.x = THREE.MathUtils.clamp(
       this.pos.x + strafe * STRAFE_SPEED * dt, -COURSE_HALF, COURSE_HALF,
     );
 
     // pitch toward steer target; roll banks visually into the strafe
-    const targetPitch = this.input.steerY * 0.5;
+    const targetPitch = cinematic ? 0 : this.input.steerY * 0.5;
     this.pitch += (targetPitch - this.pitch) * Math.min(1, dt * 5);
     this.roll += (-strafe * 0.6 - this.roll) * Math.min(1, dtReal * 6);
 
@@ -380,15 +450,24 @@ class Game {
     const flapInt = 0.6 + Math.abs(this.input.steerY) * 0.6 + this.input.charge * 0.3;
     this.birdModel.flap(this.clock.elapsedTime * (this.timeScale * 0.5 + 0.5), flapInt);
 
+    // ---- SUPER TURD MODE ----
+    // The 15s giant-turd window counts down once the transformation is over.
+    if (this.superTimer > 0 && !cinematic) {
+      this.superTimer -= dtReal;
+      if (this.superTimer <= 0) this._endSuper();
+      else this.dom.superTime.textContent = Math.ceil(this.superTimer);
+    }
+    if (this.superAura.group.visible) this.superAura.update(dtReal, cinematic ? 1 : 0.5);
+
     // ---- targets ----
     this.targets.update(dt, this.clock.elapsedTime, this.pos);
 
-    // ---- fire poop? ----
-    const fired = this.input.consumeFire();
+    // ---- fire poop? ---- (locked out during the transformation cinematic)
+    const fired = cinematic ? null : this.input.consumeFire();
     if (fired !== null && !this.poop) this.firePoop(fired);
 
     // charge audio
-    if (this.input.charging) {
+    if (this.input.charging && !cinematic) {
       this.audio.startCharge();
       this.audio.setCharge(this.input.charge);
     } else {
@@ -400,7 +479,8 @@ class Game {
     this.dom.chargeFg.style.stroke = this.input.charge > 0.8 ? '#ff2e4d' : (this.input.charge > 0.4 ? '#ff9f1c' : '#ff4d6d');
 
     // ---- reticle (predicted landing) ----
-    this._updateReticle();
+    if (cinematic) { this.reticle.visible = false; this._setBullseyeReady(false); }
+    else this._updateReticle();
 
     // ---- poop physics ----
     if (this.poop) this._updatePoop(dt);
@@ -412,23 +492,41 @@ class Game {
         this.targetTimeScale = 1;
         this.btActive = false;
         this.btImpact = null;
-        if (this.state === 'playing') this.input.setEnabled(true);
+        if (this.state === 'playing' && this.superSpin <= 0) this.input.setEnabled(true);
       }
     }
 
     // ---- camera ----
-    this._chaseCamera(dtReal, this.btActive);
+    if (cinematic) this._superCamera(dtReal);
+    else this._chaseCamera(dtReal, this.btActive);
     // TURD CAM callout blinks only while bullet-time is framing the drop
-    this.dom.turdCam.classList.toggle('hidden', !this.btActive);
+    this.dom.turdCam.classList.toggle('hidden', !this.btActive || cinematic);
 
-    // ---- timer (paused during bullet time) ----
-    if (!this.btActive && this.btHold <= 0) {
+    // ---- timer (paused during bullet time and the transformation cinematic) ----
+    if (!this.btActive && this.btHold <= 0 && !cinematic) {
       this.timeLeft -= dtReal;
       if (this.timeLeft <= 1e-4) { this.timeLeft = 0; this.endRound(); }
       const shown = Math.ceil(this.timeLeft);
       if (this.dom.timer.textContent != shown) this.dom.timer.textContent = shown;
       this.dom.timerPill.classList.toggle('warn', this.timeLeft <= 5);
     }
+  }
+
+  // The super-Saiyan camera: one full orbit around the bird over the cinematic,
+  // bird heading dead ahead the whole time. Set directly (not lerped) so the
+  // revolution is crisp; ends behind the bird so the chase cam resumes smoothly.
+  _superCamera(dt) {
+    const prog = THREE.MathUtils.clamp(1 - this.superSpin / SUPER_SPIN_TIME, 0, 1);
+    const ang = prog * Math.PI * 2;
+    const r = 15, h = 5.5;
+    this.camera.position.set(
+      this.pos.x + Math.sin(ang) * r,
+      this.pos.y + h,
+      this.pos.z + Math.cos(ang) * r,
+    );
+    const focus = this.pos.clone().add(new THREE.Vector3(0, 1, 0));
+    this._camLookAt = focus.clone(); // keep in sync for a smooth hand-off back to chase
+    this.camera.lookAt(focus);
   }
 
   _placeBird() {
@@ -457,12 +555,14 @@ class Game {
     this.reticle.visible = true;
     this.reticle.position.set(land.x, 0.16, land.z);
 
-    // Predicted accuracy against the nearest target — mirrors resolvePoop so the
-    // reticle's promise matches the score you'll actually get on release.
+    // Predicted accuracy against the nearest target — mirrors resolvePoop (incl.
+    // the turd-size catch bonus) so the reticle's promise matches the real shot.
+    const power = this.input.charging ? this.input.charge : 0;
+    const catchR = this._turdCatch(power);
     const near = this.targets.nearest(land, 40);
     let acc = 0;                 // 0 far → 1 dead-on
     if (near) {
-      acc = THREE.MathUtils.clamp(1 - near.dist / (near.target.radius + HIT_PAD), 0, 1);
+      acc = THREE.MathUtils.clamp(1 - near.dist / (near.target.radius + HIT_PAD + catchR), 0, 1);
     }
     const bullseye = acc >= BULLSEYE_ACC; // release-now window (a hit is dialled in)
     const onTarget = acc > 0;
@@ -537,12 +637,13 @@ class Game {
         const dx = p.landing.x - tg.group.position.x;
         const dz = p.landing.z - tg.group.position.z;
         const d = Math.hypot(dx, dz);
-        if (d <= tg.radius + HIT_PAD && d < bestD) { bestD = d; best = tg; }
+        // A bigger turd splats over a wider area, widening the catch radius.
+        if (d <= tg.radius + HIT_PAD + p.catch && d < bestD) { bestD = d; best = tg; }
       }
       if (best) {
         // Accuracy ramps from 1 at dead-centre to 0 at the edge of the (padded)
         // catch radius, so a wider sweet spot now counts as a bullseye.
-        const acc = THREE.MathUtils.clamp(1 - bestD / (best.radius + HIT_PAD), 0, 1);
+        const acc = THREE.MathUtils.clamp(1 - bestD / (best.radius + HIT_PAD + p.catch), 0, 1);
         const impact = best.group.position.clone(); impact.y = best.hitY;
         p.pos.copy(impact);
         this.resolvePoop(true, best, acc, impact);

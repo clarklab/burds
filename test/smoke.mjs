@@ -104,6 +104,48 @@ await page.screenshot({ path: join(ROOT, 'test/shot-play.png') });
 score = await page.textContent('#scoreValue');
 console.log('score after aimed poop:', score);
 
+// --- SUPER TURD MODE: force a target into a super turd, bomb it, assert the
+//     power-up activates (timer, aura, cinematic) and grows the turds ---
+const sup = await page.evaluate(async () => {
+  const g = window.game;
+  g.pos.set(0, 36, 60); g.yaw = Math.PI; g.pitch = 0; g.roll = 0;
+  if (g.poop) { g.scene.remove(g.poop.group); g.poop = null; }
+  g.btActive = false; g.btHold = 0; g.btImpact = null; g.targetTimeScale = 1;
+  g.superTimer = 0; g.superSpin = 0;
+  const p0 = g.pos.clone(); p0.y -= 0.8;
+  const v0 = g._launchVel();
+  const land = g._predictLanding(p0, v0);
+  const tg = g.targets.targets[0];
+  tg.alive = true; tg.orbit = false; tg.special = 'super';
+  tg.group.position.set(land.x, 0, land.z);
+  if (tg.bullseye) tg.bullseye.visible = true;
+  const scaleBefore = g._turdScale(1);
+  g.firePoop(0);
+  for (let i = 0; i < 300; i++) {
+    if (g.superTimer > 0) break;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  const out = {
+    superTimer: +g.superTimer.toFixed(2),
+    spinning: g.superSpin > 0,
+    auraVisible: g.superAura.group.visible,
+    scaleBefore: +scaleBefore.toFixed(2),
+    scaleSuper: +g._turdScale(1).toFixed(2),
+    badgeShown: !document.getElementById('superBadge').classList.contains('hidden'),
+  };
+  // clean up so the rest of the run starts from a normal state
+  g.superTimer = 0; g.superSpin = 0; g.superAura.group.visible = false;
+  g.dom.poopBtn.classList.remove('super');
+  g.dom.superBadge.classList.add('hidden');
+  g.timeScale = 1; g.targetTimeScale = 1;
+  g.input.setEnabled(true);
+  return out;
+});
+console.log('SUPER TEST:', JSON.stringify(sup));
+if (!(sup.superTimer > 0 && sup.auraVisible && sup.scaleSuper > sup.scaleBefore)) {
+  throw new Error('SUPER TURD MODE did not activate as expected: ' + JSON.stringify(sup));
+}
+
 // --- capture a clean bullet-time frame: frozen target, tap straight down ---
 await page.evaluate(() => {
   const g = window.game;

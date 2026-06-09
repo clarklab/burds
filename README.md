@@ -61,6 +61,10 @@ drops as targets stream toward you.
   camera around to show precisely where you splat.
 - Dead-center hits are **BULLSEYES** (3×). Chain hits without missing to build a
   **combo multiplier**. You've got 30 seconds — rack up the score.
+- Keep an eye out for the rare golden **SUPER TURD**. Bomb it and the seagull
+  powers up — super-Saiyan camera spin, crackling lightning, and an elated
+  squawk — then drops **giant 2.5× turds for 15 seconds**. The huge turds splat
+  over a much wider area, so they're far easier to land.
 
 Targets: beachgoers, kids, picnics, cyclists, and cars (cyclists and cars sweep
 across the lane like crossing traffic, so you'll need to lead them). They're all

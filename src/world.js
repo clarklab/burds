@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import {
   buildPerson, buildKid, buildBiker, buildPicnic, buildCar,
-  buildUmbrella, buildPalm, mat,
+  buildUmbrella, buildPalm, buildSuperTurd, mat,
 } from './models.js';
 
 export const WORLD_RADIUS = 130;     // playable radius (ground disc)
@@ -160,6 +160,10 @@ const TYPES = {
 };
 const TYPE_KEYS = Object.keys(TYPES);
 
+// The rare golden SUPER TURD pickup. Bombing it triggers SUPER TURD MODE.
+const SUPER_CHANCE = 0.14;   // odds a fresh spawn rolls a super turd (max one alive)
+const SUPER_CFG = { value: 250, radius: 2.2, moving: false };
+
 function buildBullseye() {
   const g = new THREE.Group();
   const ringSpecs = [
@@ -211,11 +215,26 @@ export class TargetManager {
     return this._frontZ;
   }
 
+  // Is a super turd currently live? (we only ever keep one in play at a time)
+  _hasSuper() {
+    return this.targets.some((t) => t.alive && t.special);
+  }
+
   // Spawn a target at lane position z (random x within the corridor).
   spawn(typeKey, z) {
-    const key = typeKey || TYPE_KEYS[(Math.random() * TYPE_KEYS.length) | 0];
-    const cfg = TYPES[key];
-    const group = cfg.build();
+    // Occasionally roll the rare golden SUPER TURD instead of a normal target.
+    const makeSuper = !typeKey && !this._hasSuper() && Math.random() < SUPER_CHANCE;
+    let key, cfg, group, special = null;
+    if (makeSuper) {
+      special = 'super';
+      key = 'superturd';
+      cfg = SUPER_CFG;
+      group = buildSuperTurd();
+    } else {
+      key = typeKey || TYPE_KEYS[(Math.random() * TYPE_KEYS.length) | 0];
+      cfg = TYPES[key];
+      group = cfg.build();
+    }
 
     const orbit = !!cfg.moving;
     const x = (Math.random() * 2 - 1) * COURSE_HALF;
@@ -237,7 +256,7 @@ export class TargetManager {
       cfg, value: cfg.value, radius: cfg.radius * TARGET_SCALE,
       hitY: localTop * TARGET_SCALE,   // world-space top, for collision
       bullLocalY: localTop + 1.4,      // local-space bob base for the bullseye
-      orbit, baseX: x,
+      orbit, special, baseX: x,
       driftPhase: Math.random() * Math.PI * 2,
       bobT: Math.random() * 10,
       alive: true,
@@ -279,6 +298,9 @@ export class TargetManager {
       tg.bobT += dt;
       tg.bullseye.position.y = tg.bullLocalY + Math.sin(tg.bobT * 2) * 0.25;
       tg.bullseye.rotation.y += dt * 0.8;
+
+      // the super turd slowly spins so its gold catches the eye
+      if (tg.special) tg.group.rotation.y += dt * 1.5;
 
       // movers sweep across the lane like crossing traffic
       if (tg.orbit) {
