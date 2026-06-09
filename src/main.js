@@ -632,6 +632,10 @@ class Game {
     // Analytic projectile: pos(t) = p0 + v0*t + 0.5*g*t^2. Integrating exactly
     // (rather than Euler) means the predicted-landing reticle is truthful.
     const landing = this._predictLanding(p0, v0) || p0.clone();
+    // Total fall time to the ground — used to pace the crowd's turn so each
+    // figure finishes squaring up to the turd right as it arrives.
+    const tFall = Math.max(0.001, this._timeToHeight(p0.y, v0.y, 0) || 1);
+    const seq = this._turdSeq = (this._turdSeq || 0) + 1;
     // Only a MAX-POWER drop is eligible for bullet time. Find the target (if any)
     // it's heading close to, and when it reaches that target's height.
     const maxShot = power >= MAX_CHARGE_BT;
@@ -648,7 +652,7 @@ class Game {
         }
       }
     }
-    this.poop = { group, p0: p0.clone(), v0: v0.clone(), t: 0, pos: p0.clone(), vel: v0.clone(), prevY: p0.y, landing, btTarget, tImpact, maxShot, power, turdScale, catch: catchR, blast, fire, spin: 0 };
+    this.poop = { group, p0: p0.clone(), v0: v0.clone(), t: 0, pos: p0.clone(), vel: v0.clone(), prevY: p0.y, landing, btTarget, tImpact, tFall, seq, maxShot, power, turdScale, catch: catchR, blast, fire, spin: 0 };
     this.input.setEnabled(false);
     this.audio.poop();
     this.audio.whoosh();
@@ -913,8 +917,16 @@ class Game {
     if (this.fireMode) this.fireAura.update(dtReal, 1);
     else if (this.superAura.group.visible) this.superAura.update(dtReal, cinematic ? 1 : 0.6);
 
-    // ---- targets ----
-    this.targets.update(dt, this.clock.elapsedTime, this.pos);
+    // ---- targets ---- (pass the live drop so every figure can swivel to face
+    // the falling turd, timed to finish squaring up just as it arrives)
+    const p = this.poop;
+    const drop = p ? { x: p.pos.x, z: p.pos.z, t: p.t, tFall: p.tFall, id: p.seq } : null;
+    this.targets.update(dt, this.clock.elapsedTime, this.pos, drop);
+
+    // ---- wall of death (concert) ---- announce the call and the collision
+    const wod = this.targets.consumeWodEvent && this.targets.consumeWodEvent();
+    if (wod === 'call') { this._showToast('WALL OF DEATH! 🤘'); this.audio.seagullYell(); }
+    else if (wod === 'clash') { this._showToast('💥 CRUNCH! 💥'); this.audio.fireRoar(); }
 
     // ---- fire poop? ---- (locked out during the transformation cinematic)
     const fired = cinematic ? null : this.input.consumeFire();
