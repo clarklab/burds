@@ -371,6 +371,26 @@ const CIRCUIT_SUPER_CHANCE = 0.05; // odds a respawning crowd slot rolls a super
 // appeared in this many seconds, so power-ups are never more than ~10s apart.
 const SUPER_MAX_GAP = 8;
 
+// ---- Concert mosh pit: a churning crowd that periodically pulls a WALL OF
+// DEATH — the throng splits down the middle into two facing walls, then on the
+// cue both halves charge across the open lane and slam together at the centre.
+// The pit lane runs along z (where the bird flies in), so the two walls part
+// left/right and collide right under the flight path.
+const WOD = {
+  WANDER: 9.5,   // base seconds of ordinary moshing between walls of death
+  WANDER_RAND: 6,
+  PART: 2.3,     // crowd peels apart, opening the lane
+  BRACE: 1.0,    // walls hold, squaring up to face each other
+  CHARGE: 0.55,  // both walls sprint to the centre
+  CLASH: 0.8,    // bodies pile up and churn at the collision line
+  RECOVER: 1.7,  // everyone melts back to their spot
+  GAP: 4.2,      // how far each fan retreats from centre when the lane opens
+  LEAN: 0.9,     // forward lean (toward centre) while bracing/charging
+};
+const smooth = (x) => { x = Math.max(0, Math.min(1, x)); return x * x * (3 - 2 * x); };
+// Shortest signed angle from a to b, wrapped to [-π, π].
+const angDelta = (b, a) => Math.atan2(Math.sin(b - a), Math.cos(b - a));
+
 function buildBullseye() {
   const g = new THREE.Group();
   const ringSpecs = [
@@ -425,6 +445,9 @@ export class TargetManager {
     this._forceSuper = false;
     this.mode = level && level.mode === 'circuit' ? 'circuit' : 'runner';
     this.level = level || null;
+    // wall-of-death choreography clock (concert only); `event` is drained by the
+    // game loop to fire the announcement toast + crowd roar at the right beats.
+    this._mosh = { state: 'wander', t: 0, next: WOD.WANDER + Math.random() * WOD.WANDER_RAND, event: null };
     if (this.mode === 'circuit') {
       for (const slot of level.layout()) {
         slot.respawn = 0; slot.target = null;
@@ -476,6 +499,12 @@ export class TargetManager {
       driftPhase: 0, bobT: Math.random() * 10, sway: Math.random() * Math.PI * 2,
       // per-figure mosh motion (concert) — a jumping bounce + jostle
       moshFreq: 3.5 + Math.random() * 4, moshPhase: Math.random() * Math.PI * 2, moshAmp: 0.35 + Math.random() * 0.7,
+      // wall-of-death bookkeeping: the spot this fan churns around, which side of
+      // the lane it belongs to, and its live displacement from home.
+      homeX: slot.x, homeZ: slot.z,
+      side: slot.x < 0 ? -1 : slot.x > 0 ? 1 : (Math.round(slot.z) & 1 ? 1 : -1),
+      wodX: 0,
+      faces: !special,            // every crowd figure turns to face the turd
       alive: true, dying: 0,
     };
     this.targets.push(t);
@@ -499,6 +528,7 @@ export class TargetManager {
   _updateCircuit(dt) {
     this._sinceSuper += dt;
     const mosh = !!(this.level && this.level.mosh);
+    const m = mosh ? this._stepMoshPit(dt) : null;
     for (let i = this.targets.length - 1; i >= 0; i--) {
       const tg = this.targets[i];
       if (!tg.alive) {
@@ -523,14 +553,14 @@ export class TargetManager {
       if (tg.special) {
         tg.group.rotation.y += dt * 1.5;   // super turd spins
       } else if (mosh && tg.slot && !tg.slot.vip) {
-        // concert crowd moshing: jump, jostle and bob
-        tg.sway += dt;
-        const j = Math.abs(Math.sin(tg.sway * tg.moshFreq + tg.moshPhase));
-        tg.group.position.y = (tg.baseY || 0) + j * tg.moshAmp;
-        tg.group.rotation.z = Math.sin(tg.sway * tg.moshFreq * 0.5 + tg.moshPhase) * 0.12;
-        tg.group.rotation.y = (tg.slot.faceY || 0) + Math.sin(tg.sway * 0.8 + tg.moshPhase) * 0.25;
+        this._moshFan(tg, dt, m);
       } else {
         tg.sway += dt; tg.group.rotation.z = Math.sin(tg.sway * 2) * 0.04; // gentle sway
+      }
+      // every person turns to face the falling turd (timed to land in the face)
+      if (tg.faces && !tg.special) {
+        const wobble = Math.sin(tg.sway * 0.8 + tg.moshPhase) * 0.1;
+        tg.group.rotation.y = this._orientToTurd(tg, dt, tg.slot.faceY || 0) + wobble;
       }
     }
     // refill empty slots whose respawn timer has elapsed
@@ -541,6 +571,100 @@ export class TargetManager {
     }
     // cadence: never let the crowd go too long without a power-up
     if (!this._hasSuper() && this._sinceSuper > SUPER_MAX_GAP) this._forceSuperCircuit();
+  }
+
+  // Drained by the game loop so it can fire the announcement toast + crowd roar
+  // on the beat a wall of death is called ('call') and on impact ('clash').
+  consumeWodEvent() {
+    if (!this._mosh || !this._mosh.event) return null;
+    const e = this._mosh.event; this._mosh.event = null; return e;
+  }
+
+  // Advance the wall-of-death state machine one tick and derive the pit-wide
+  // factors every fan reads: how wide the lane has opened (`gap`), how far the
+  // walls have closed across it (`converge`), how squared-up they are to the
+  // centre (`face`) and how hard they're leaning in (`lean`).
+  _stepMoshPit(dt) {
+    const m = this._mosh;
+    m.clock = (m.clock || 0) + dt;
+    m.t += dt;
+    const advance = (next, dur) => { if (m.t >= dur) { m.state = next; m.t = 0; } };
+    switch (m.state) {
+      case 'wander':
+        if (m.t >= m.next) { m.state = 'part'; m.t = 0; m.event = 'call'; }
+        break;
+      case 'part':  advance('brace', WOD.PART); break;
+      case 'brace': advance('charge', WOD.BRACE); break;
+      case 'charge':
+        if (m.t >= WOD.CHARGE) { m.state = 'clash'; m.t = 0; m.event = 'clash'; }
+        break;
+      case 'clash': advance('recover', WOD.CLASH); break;
+      case 'recover':
+        if (m.t >= WOD.RECOVER) {
+          m.state = 'wander'; m.t = 0;
+          m.next = WOD.WANDER + Math.random() * WOD.WANDER_RAND;
+        }
+        break;
+    }
+    let gap = 0, converge = 0, face = 0, lean = 0;
+    const p = m.t;
+    switch (m.state) {
+      case 'part':  { const k = smooth(p / WOD.PART); gap = k * WOD.GAP; face = k * 0.7; break; }
+      case 'brace': gap = WOD.GAP; face = 1; lean = smooth(p / WOD.BRACE) * WOD.LEAN; break;
+      case 'charge': { const k = smooth(p / WOD.CHARGE); gap = WOD.GAP * (1 - k); converge = k; face = 1; lean = WOD.LEAN; break; }
+      case 'clash': { const k = smooth(p / WOD.CLASH); converge = 1; face = 1 - k * 0.5; lean = WOD.LEAN * (1 - k); break; }
+      case 'recover': { const k = smooth(p / WOD.RECOVER); converge = 1 - k; face = (1 - k) * 0.5; break; }
+    }
+    m.gap = gap; m.converge = converge; m.face = face; m.lean = lean;
+    return m;
+  }
+
+  // Position one moshing fan: an always-on churn (jump + swirl + a surge wave
+  // rolling toward the stage) with the wall-of-death displacement layered on top
+  // when one is running.
+  _moshFan(tg, dt, m) {
+    tg.sway += dt;
+    const ph = tg.moshPhase;
+    const jump = Math.abs(Math.sin(tg.sway * tg.moshFreq + ph)) * tg.moshAmp;
+    const swirlX = Math.sin(tg.sway * 1.1 + ph) * 0.28 + Math.sin(tg.sway * 0.6 + ph * 1.7) * 0.16;
+    const swirlZ = Math.cos(tg.sway * 0.9 + ph) * 0.22;
+    const surge = Math.sin(m.clock * 1.3 - tg.homeZ * 0.22) * 0.5; // crowd pushes toward the stage (-z)
+
+    // lane opens (gap) then the walls slam across it (converge), interleaving in
+    // a churning pile at the centre line.
+    const OVERSHOOT = 0.8;
+    const gxOpen = tg.homeX + tg.side * m.gap;
+    const churn = m.converge * Math.sin(tg.sway * 6 + ph) * 0.7;
+    const gxCenter = tg.side * OVERSHOOT + churn;
+    const gx = gxOpen + (gxCenter - gxOpen) * m.converge;
+
+    tg.group.position.x = gx + swirlX * (1 - m.converge);
+    tg.group.position.z = tg.homeZ + swirlZ + surge + churn * 0.5;
+    tg.group.position.y = (tg.baseY || 0) + jump;
+
+    // body lean (the brace/charge of a wall of death) + a little jostle; the
+    // yaw (facing the falling turd) is handled centrally by _orientToTurd.
+    tg.group.rotation.z = tg.side * m.lean + Math.sin(tg.sway * tg.moshFreq * 0.5 + ph) * 0.12 * (1 - m.face);
+  }
+
+  // Swivel one figure to face the incoming turd, paced so it finishes squaring
+  // up just as the turd lands ("right in the face"). The model's front is -z at
+  // yaw 0, hence atan2(-dx,-dz). With no turd in the air it eases back to its
+  // resting heading. Returns the yaw to apply.
+  _orientToTurd(tg, dt, idleYaw) {
+    const drop = this._drop;
+    if (drop) {
+      // capture the heading held when this turd launched, so the whole turn is
+      // spread across the fall rather than snapping toward a moving target
+      if (tg._turdSeq !== drop.id) { tg._turdSeq = drop.id; tg._yaw0 = tg.faceYaw == null ? idleYaw : tg.faceYaw; }
+      const aim = Math.atan2(-(drop.x - tg.group.position.x), -(drop.z - tg.group.position.z));
+      const e = smooth(Math.min(1, (drop.t / drop.tFall) / 0.85)); // fully faced by ~85% of the fall
+      tg.faceYaw = tg._yaw0 + angDelta(aim, tg._yaw0) * e;
+    } else {
+      const cur = tg.faceYaw == null ? idleYaw : tg.faceYaw;
+      tg.faceYaw = cur + angDelta(idleYaw, cur) * Math.min(1, dt * 1.6);
+    }
+    return tg.faceYaw;
   }
 
   // March the spawn cursor one gap further ahead and return the new z.
@@ -597,6 +721,8 @@ export class TargetManager {
       orbit, special, baseX: x,
       driftPhase: Math.random() * Math.PI * 2,
       bobT: Math.random() * 10,
+      // beachgoers, kids and cyclists turn to look up at the incoming turd
+      faces: key === 'person' || key === 'kid' || key === 'biker',
       alive: true,
       dying: 0,
     };
@@ -604,7 +730,9 @@ export class TargetManager {
     return t;
   }
 
-  update(dt, t, birdPos) {
+  update(dt, t, birdPos, drop) {
+    // The live falling turd (or null) every figure swivels to face.
+    this._drop = drop || null;
     if (this.mode === 'circuit') { this._updateCircuit(dt); return; }
     this._sinceSuper += dt;
     if (!this._hasSuper() && this._sinceSuper > SUPER_MAX_GAP) this._forceSuper = true;
@@ -651,6 +779,13 @@ export class TargetManager {
         if (tg.group.userData.wheels) {
           for (const w of tg.group.userData.wheels) w.rotation.x -= dt * 3;
         }
+      }
+
+      // beachgoers turn to face the falling turd, timed to land in the face;
+      // they relax back to their lane heading once it's gone
+      if (tg.faces && !tg.special) {
+        tg.sway = (tg.sway || 0) + dt;
+        tg.group.rotation.y = this._orientToTurd(tg, dt, tg.orbit ? Math.PI / 2 : 0);
       }
     }
   }
