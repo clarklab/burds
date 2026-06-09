@@ -86,8 +86,12 @@ const TURD_FOOTPRINT = 0.7;  // extra catch radius per unit of turd scale over 1
 // ----- tier-3 weapon modes (picked from a slow-mo menu on the 3rd stack) -----
 const MODE_BONUS_TIME = 20;  // seconds added to the super window when you pick a mode
 const PICKER_SCALE = 0.06;   // time slows almost to a stop while the picker is open
-const SCATTER_COUNT = 5;     // pellets per scatter volley (Contra-style spread)
-const SCATTER_SPREAD = 0.62; // total fan angle (radians) across the spread
+// Scatter throws a circular grid of pellets so the volley blankets a square-ish
+// patch of ground instead of a single line. Rows of 2/3/3/2 approximate a
+// circle (10 pellets total); columns fan sideways (yaw), rows fan in depth (pitch).
+const SCATTER_ROWS = [2, 3, 3, 2]; // pellets per depth row — a round-ish cluster
+const SCATTER_SPREAD = 0.62; // sideways fan angle (radians) across the widest row
+const SCATTER_PITCH = 0.22;  // pitch fan (radians) front-to-back, spreads the depth
 const SCATTER_SIZE = 0.62;   // pellets are smaller than a normal turd
 const MG_RATE = 3;           // machine-gun turds per second
 const MG_POWER = 0.42;       // fixed hold-power for machine-gun turds
@@ -106,6 +110,10 @@ const BT_CATCH = 3.0;
 // drop when it's on target.
 const MAX_CHARGE_BT = 0.999; // charge level that counts as "max power"
 const AIM_TIME_SCALE = 0.3;  // slow-mo factor while holding a maxed turd to aim
+// On a maxed on-target drop the turd falls at FULL speed for the first stretch,
+// then bullet time snaps in only for the final approach. This is the fraction of
+// the time-to-impact the turd flies at normal speed before slow-mo kicks in.
+const BT_TRIGGER_FRAC = 0.75;
 
 class Game {
   constructor() {
@@ -595,14 +603,16 @@ class Game {
   // longer flings it harder or further) — it always lands the same distance
   // ahead for a given altitude, so aiming is about strafing under the target and
   // releasing on the beat, not about charging range.
-  _launchVel(yawOffset = 0) {
+  _launchVel(yawOffset = 0, pitchOffset = 0) {
     const yaw = this.yaw + yawOffset;
     const fwd = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
     // Circuit levels throw shorter+steeper so the drop lands just ahead of the
     // bird as it passes over the packed crowd; the beach keeps its long lob.
     const fwdSpeed = this.levelMode === 'circuit' ? CIRCUIT_THROW : (BIRD_SPEED + FIRE_POWER * POWER_SPEED);
     const v = fwd.clone().multiplyScalar(fwdSpeed);
-    v.y = Math.sin(this.pitch) * BIRD_SPEED - 1.5; // small initial downward
+    // pitchOffset lobs the shot a touch higher/lower so scatter rows land at
+    // different depths, turning the sideways fan into a 2D ground pattern.
+    v.y = Math.sin(this.pitch + pitchOffset) * BIRD_SPEED - 1.5; // small initial downward
     return v;
   }
 
@@ -651,12 +661,13 @@ class Game {
   // Fire a single turd. `opts`:
   //   bt        — eligible for bullet time (normal/fire single shots only)
   //   yawOffset — fan the launch sideways (scatter spread)
+  //   pitchOffset — lob shorter/longer (scatter depth rows)
   //   sizeMul   — shrink the turd (scatter pellets)
   //   silent    — skip the per-shot whoosh (volleys/auto-fire play one cue)
   firePoop(power, opts = {}) {
-    const { bt = false, yawOffset = 0, sizeMul = 1, silent = false } = opts;
+    const { bt = false, yawOffset = 0, pitchOffset = 0, sizeMul = 1, silent = false } = opts;
     const p0 = this.pos.clone().add(new THREE.Vector3(0, -0.8, 0));
-    const v0 = this._launchVel(yawOffset);
+    const v0 = this._launchVel(yawOffset, pitchOffset);
     const fire = this.weaponMode === 'fire';
     const group = fire ? buildFireball() : buildPoop();
     const turdScale = this._turdScale(power) * sizeMul;
@@ -691,25 +702,41 @@ class Game {
     this.poops.push(p);
     this.audio.poop();
     if (!silent) this.audio.whoosh();
-    // Carry the aim slow-mo straight into the drop when a maxed shot is on target;
-    // otherwise time snaps back to normal for the fall (no bullet time when the
-    // turd isn't close to anyone).
+    // A maxed shot on target earns the slow-mo flourish — but we hold it back.
+    // Releasing drops the aim slow-mo and the turd falls at full speed for the
+    // first stretch; bullet time only snaps in for the final approach (armed
+    // here, engaged in _updatePoop once p.t crosses BT_TRIGGER_FRAC of tImpact).
     if (maxShot && btTarget) {
-      this.btActive = true;
-      this.targetTimeScale = 0.16;
       this.btTarget = btTarget;
       this.btPoop = p;
-      this.audio.slowmo();
+      p.btArmed = true;
     }
     return p;
   }
 
-  // Contra-style spread: one volley of pellets fanned across the lane. Single
-  // tap or a charged hold both work — charge just makes bigger pellets.
+  // Shotgun blast: one volley thrown as a circular 2/3/3/2 grid so it carpets a
+  // square-ish patch of ground rather than a single line. Each depth row fans in
+  // pitch (near→far) and each pellet in that row fans sideways in yaw. Single tap
+  // or a charged hold both work — charge just makes bigger pellets.
   _fireScatter(power) {
-    for (let i = 0; i < SCATTER_COUNT; i++) {
-      const f = SCATTER_COUNT === 1 ? 0 : (i / (SCATTER_COUNT - 1) - 0.5);
-      this.firePoop(power, { bt: false, yawOffset: f * SCATTER_SPREAD, sizeMul: SCATTER_SIZE, silent: i > 0 });
+    const rows = SCATTER_ROWS;
+    let first = true;
+    for (let r = 0; r < rows.length; r++) {
+      const n = rows[r];
+      // depth fraction: -0.5 (nearest) … +0.5 (farthest)
+      const pf = rows.length === 1 ? 0 : (r / (rows.length - 1) - 0.5);
+      for (let c = 0; c < n; c++) {
+        // sideways fraction within this row, centred on 0
+        const yf = n === 1 ? 0 : (c / (n - 1) - 0.5);
+        this.firePoop(power, {
+          bt: false,
+          yawOffset: yf * SCATTER_SPREAD,
+          pitchOffset: pf * SCATTER_PITCH,
+          sizeMul: SCATTER_SIZE,
+          silent: !first,
+        });
+        first = false;
+      }
     }
   }
 
@@ -1282,8 +1309,17 @@ class Game {
       p.group.rotation.z = p.spin * 0.7;
     }
 
-    // (Bullet time, when it applies, is engaged at fire-time in firePoop — only
-    // for a max-power drop that's heading close to a target.)
+    // Deferred bullet time: an armed max-power drop flies the first BT_TRIGGER_FRAC
+    // of its trip at full speed, then slow-mo snaps in for the final approach as
+    // the turd bears down on its victim — so we don't drown the whole fall in slow-mo.
+    if (p.btArmed && !this.btActive && p.t >= BT_TRIGGER_FRAC * p.tImpact) {
+      p.btArmed = false;
+      this.btActive = true;
+      this.targetTimeScale = 0.16;
+      this.btPoop = p;
+      this.btTarget = p.btTarget;
+      this.audio.slowmo();
+    }
 
     // Collision uses the poop's predicted GROUND landing vs each target's ground
     // position, so accuracy matches exactly what the reticle showed the player.
