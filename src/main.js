@@ -953,12 +953,16 @@ class Game {
     if (this.pos.y > MAX_ALT) { this.pos.y = MAX_ALT; if (this.pitch > 0) this.pitch = 0; }
   }
 
-  // Circuit auto-pilot: the bird flies the venue's long axis at a constant
-  // speed, the player only climbs/dives. At each end it runs a short scripted
-  // U-turn (sweep the heading 180°, bulge out and back to centre, ease through
-  // a stop) so it loops past the couple/band, back past the crowd, forever.
+  // Circuit auto-pilot: the bird flies the venue's long axis itself, looping
+  // past the couple/band and back over the crowd via a scripted U-turn at each
+  // end. The player still STEERS, though — strafing left/right across the venue
+  // and diving/climbing — so they can aim either side of the crowd.
   _circuitFlight(dt, dtReal, cinematic) {
     const c = this.level.circuit;
+    const half = c.halfWidth || 12;
+    const strafe = cinematic ? 0 : this.input.steerX;
+    // strafe across the venue + dive ride on top of the auto forward/loop motion
+    this.pos.x = THREE.MathUtils.clamp(this.pos.x + strafe * STRAFE_SPEED * dt, -half, half);
     const targetPitch = cinematic ? 0 : this.input.steerY * 0.5;
     this.pitch += (targetPitch - this.pitch) * Math.min(1, dt * 5);
 
@@ -967,23 +971,22 @@ class Game {
       const u = Math.min(1, this.turnT / TURN_TIME);
       const pr = u * u * (3 - 2 * u);                 // smoothstep
       this.yaw = this._turnYawFrom + Math.PI * pr;    // sweep through 180°
-      this.pos.x = Math.sin(pr * Math.PI) * c.bulge * this._turnSide;
       this.pos.z += this._turnDir * BIRD_SPEED * Math.cos(pr * Math.PI) * dt; // nose past, then back
-      this.roll = Math.sin(pr * Math.PI) * 0.6 * this._turnSide;
       this.pos.y += Math.sin(this.pitch) * BIRD_SPEED * dt;
       this._clampAlt();
+      // bank into the turn, blended with any strafe lean
+      const turnBank = Math.sin(pr * Math.PI) * 0.6 * this._turnDir;
+      this.roll += (turnBank - strafe * 0.5 - this.roll) * Math.min(1, dtReal * 6);
       if (this.turnT >= TURN_TIME) {
         this.turning = false;
         this.circuitDir = -this.circuitDir;
         this.yaw = this.circuitDir < 0 ? Math.PI : 0;
-        this.pos.x = 0; this.roll = 0;
       }
       return;
     }
 
     this.yaw = this.circuitDir < 0 ? Math.PI : 0;
-    this.pos.x += (0 - this.pos.x) * Math.min(1, dt * 4);     // settle on the centreline
-    this.roll += (0 - this.roll) * Math.min(1, dtReal * 6);
+    this.roll += (-strafe * 0.6 - this.roll) * Math.min(1, dtReal * 6); // bank into the strafe
     const fwd = new THREE.Vector3(Math.sin(this.yaw), 0, Math.cos(this.yaw));
     this.pos.addScaledVector(fwd, BIRD_SPEED * dt);
     this.pos.y += Math.sin(this.pitch) * BIRD_SPEED * dt;
@@ -997,7 +1000,6 @@ class Game {
     this.turnT = 0;
     this._turnYawFrom = this.yaw;
     this._turnDir = this.circuitDir;
-    this._turnSide = this.circuitDir < 0 ? 1 : -1; // bulge outward (alternates each end → no net drift)
   }
 
   // The super-Saiyan camera: one full orbit around the bird over the cinematic,
