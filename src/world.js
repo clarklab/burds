@@ -366,7 +366,10 @@ const SUPER_CFG = { value: 250, radius: 2.2, moving: false };
 
 // Circuit (wedding / concert) tuning.
 const CIRCUIT_RESPAWN = 2.6;       // seconds before a downed target stands back up
-const CIRCUIT_SUPER_CHANCE = 0.03; // odds a respawning crowd slot rolls a super turd
+const CIRCUIT_SUPER_CHANCE = 0.05; // odds a respawning crowd slot rolls a super turd
+// Hard cap on the gap between SUPER TURDs (any level) — one is forced if none has
+// appeared in this many seconds, so power-ups are never more than ~10s apart.
+const SUPER_MAX_GAP = 8;
 
 function buildBullseye() {
   const g = new THREE.Group();
@@ -408,12 +411,18 @@ export class TargetManager {
     this.mode = 'runner';
     this.slots = [];
     this.level = null;
+    // Power-up cadence: guarantee a SUPER TURD shows up at least every
+    // SUPER_MAX_GAP seconds across every level (forces one if the clock runs out).
+    this._sinceSuper = 0;
+    this._forceSuper = false;
   }
 
   reset(birdPos, level) {
     for (const t of this.targets) this.scene.remove(t.group);
     this.targets = [];
     this.slots = [];
+    this._sinceSuper = 0;
+    this._forceSuper = false;
     this.mode = level && level.mode === 'circuit' ? 'circuit' : 'runner';
     this.level = level || null;
     if (this.mode === 'circuit') {
@@ -433,12 +442,14 @@ export class TargetManager {
   // Each layout "slot" is a fixed spot in the venue (a chair, a band member,
   // the couple…). Killed targets respawn in place after a short delay so the
   // venue stays populated for the bird's repeated passes.
-  _spawnSlot(slot) {
+  _spawnSlot(slot, forceSuper = false) {
     let group, special = null, value = slot.value, scale = slot.scale, radius = slot.radius, bull = slot.bull;
-    // occasionally float a golden SUPER TURD into a crowd slot (max one alive)
-    if (!slot.vip && !this._hasSuper() && Math.random() < CIRCUIT_SUPER_CHANCE) {
+    // float a golden SUPER TURD into a crowd slot (by chance, or forced by the
+    // cadence timer); only one alive at a time.
+    if (forceSuper || (!slot.vip && !this._hasSuper() && Math.random() < CIRCUIT_SUPER_CHANCE)) {
       special = 'super'; group = buildSuperTurd();
       value = SUPER_CFG.value; scale = 1.0; radius = SUPER_CFG.radius; bull = true;
+      this._sinceSuper = 0;
     } else {
       group = slot.build();
     }
@@ -463,6 +474,8 @@ export class TargetManager {
       bullLocalY: localTop + 0.8,
       orbit: false, special, slot,
       driftPhase: 0, bobT: Math.random() * 10, sway: Math.random() * Math.PI * 2,
+      // per-figure mosh motion (concert) — a jumping bounce + jostle
+      moshFreq: 3.5 + Math.random() * 4, moshPhase: Math.random() * Math.PI * 2, moshAmp: 0.35 + Math.random() * 0.7,
       alive: true, dying: 0,
     };
     this.targets.push(t);
@@ -470,7 +483,22 @@ export class TargetManager {
     return t;
   }
 
+  // Force a super turd into a random live crowd slot — used by the cadence timer
+  // when none has appeared in a while and the player hasn't been killing anyone.
+  _forceSuperCircuit() {
+    const live = this.targets.filter((t) => t.alive && t.slot && !t.slot.vip && !t.special);
+    if (!live.length) return;
+    const t = live[(Math.random() * live.length) | 0];
+    this.scene.remove(t.group);
+    const idx = this.targets.indexOf(t);
+    if (idx >= 0) this.targets.splice(idx, 1);
+    t.slot.target = null;
+    this._spawnSlot(t.slot, true);
+  }
+
   _updateCircuit(dt) {
+    this._sinceSuper += dt;
+    const mosh = !!(this.level && this.level.mosh);
     for (let i = this.targets.length - 1; i >= 0; i--) {
       const tg = this.targets[i];
       if (!tg.alive) {
@@ -492,8 +520,18 @@ export class TargetManager {
         tg.bullseye.position.y = tg.bullLocalY + Math.sin(tg.bobT * 2) * 0.2;
         tg.bullseye.rotation.y += dt * 0.8;
       }
-      if (tg.special) tg.group.rotation.y += dt * 1.5;   // super turd spins
-      else { tg.sway += dt; tg.group.rotation.z = Math.sin(tg.sway * 2) * 0.04; } // gentle crowd sway
+      if (tg.special) {
+        tg.group.rotation.y += dt * 1.5;   // super turd spins
+      } else if (mosh && tg.slot && !tg.slot.vip) {
+        // concert crowd moshing: jump, jostle and bob
+        tg.sway += dt;
+        const j = Math.abs(Math.sin(tg.sway * tg.moshFreq + tg.moshPhase));
+        tg.group.position.y = (tg.baseY || 0) + j * tg.moshAmp;
+        tg.group.rotation.z = Math.sin(tg.sway * tg.moshFreq * 0.5 + tg.moshPhase) * 0.12;
+        tg.group.rotation.y = (tg.slot.faceY || 0) + Math.sin(tg.sway * 0.8 + tg.moshPhase) * 0.25;
+      } else {
+        tg.sway += dt; tg.group.rotation.z = Math.sin(tg.sway * 2) * 0.04; // gentle sway
+      }
     }
     // refill empty slots whose respawn timer has elapsed
     for (const slot of this.slots) {
@@ -501,6 +539,8 @@ export class TargetManager {
       slot.respawn -= dt;
       if (slot.respawn <= 0) this._spawnSlot(slot);
     }
+    // cadence: never let the crowd go too long without a power-up
+    if (!this._hasSuper() && this._sinceSuper > SUPER_MAX_GAP) this._forceSuperCircuit();
   }
 
   // March the spawn cursor one gap further ahead and return the new z.
@@ -516,14 +556,18 @@ export class TargetManager {
 
   // Spawn a target at lane position z (random x within the corridor).
   spawn(typeKey, z) {
-    // Occasionally roll the rare golden SUPER TURD instead of a normal target.
-    const makeSuper = !typeKey && !this._hasSuper() && Math.random() < SUPER_CHANCE;
+    // Roll the golden SUPER TURD instead of a normal target — either by chance
+    // or because the cadence timer forced one (and only one alive at a time).
+    const forced = this._forceSuper && !typeKey && !this._hasSuper();
+    const makeSuper = forced || (!typeKey && !this._hasSuper() && Math.random() < SUPER_CHANCE);
     let key, cfg, group, special = null;
     if (makeSuper) {
       special = 'super';
       key = 'superturd';
       cfg = SUPER_CFG;
       group = buildSuperTurd();
+      this._sinceSuper = 0;
+      this._forceSuper = false;
     } else {
       key = typeKey || TYPE_KEYS[(Math.random() * TYPE_KEYS.length) | 0];
       cfg = TYPES[key];
@@ -562,6 +606,8 @@ export class TargetManager {
 
   update(dt, t, birdPos) {
     if (this.mode === 'circuit') { this._updateCircuit(dt); return; }
+    this._sinceSuper += dt;
+    if (!this._hasSuper() && this._sinceSuper > SUPER_MAX_GAP) this._forceSuper = true;
     const bz = birdPos ? birdPos.z : 0;
     for (let i = this.targets.length - 1; i >= 0; i--) {
       const tg = this.targets[i];

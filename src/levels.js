@@ -24,10 +24,10 @@ function weddingLayout() {
   slots.push({ kind: 'groom',  build: buildGroom,  x: -1.8, z: -47, faceY: Math.PI, value: VIP, scale: 1.2, radius: 1.4, vip: true, bull: true });
   slots.push({ kind: 'bride',  build: buildBride,  x: 1.8,  z: -47, faceY: Math.PI, value: VIP, scale: 1.2, radius: 1.4, vip: true, bull: true });
   slots.push({ kind: 'priest', build: buildPriest, x: 0,    z: -50, faceY: Math.PI, value: VIP, scale: 1.2, radius: 1.4, vip: true, bull: true });
-  // guests seated in chairs on both sides of the aisle, facing the altar (-Z)
-  const rows = 9, seatX = [2.2, 4.4, 6.6, 8.8];
+  // guests packed into chairs on both sides of the aisle, facing the altar (-Z)
+  const rows = 12, seatX = [2.0, 3.6, 5.2, 6.8, 8.4];
   for (let r = 0; r < rows; r++) {
-    const z = -36 + r * 5.4;
+    const z = -38 + r * 4.0;
     for (const sx of [-1, 1]) for (const x of seatX) {
       slots.push({ kind: 'guest', build: buildSeatedGuest, x: sx * x, z, faceY: 0, value: GUEST, scale: 1.0, radius: 1.2, vip: false, bull: false });
     }
@@ -45,14 +45,14 @@ function concertLayout() {
   slots.push({ kind: 'guitar', build: () => buildBandMember('guitar'), x: -7, z: stageZ + 1, y: stageY, faceY: Math.PI, value: BAND, scale: 1.2, radius: 1.4, vip: true, bull: true });
   slots.push({ kind: 'bass',   build: () => buildBandMember('bass'),   x: 7,  z: stageZ + 1, y: stageY, faceY: Math.PI, value: BAND, scale: 1.2, radius: 1.4, vip: true, bull: true });
   slots.push({ kind: 'drums',  build: () => buildBandMember('drums'),  x: 0,  z: stageZ - 3, y: stageY, faceY: Math.PI, value: BAND, scale: 1.2, radius: 1.4, vip: true, bull: true });
-  // packed standing fans facing the stage (-Z)
-  const rows = 11, cols = [-9, -6, -3, 0, 3, 6, 9];
+  // a dense, packed throng of fans facing the stage (-Z)
+  const rows = 14, cols = [-10, -7.5, -5, -2.5, 0, 2.5, 5, 7.5, 10];
   for (let r = 0; r < rows; r++) {
-    const z = -40 + r * 6.6;
+    const z = -42 + r * 4.2;
     for (const x of cols) {
       slots.push({
         kind: 'fan', build: buildFan,
-        x: x + (Math.random() - 0.5) * 1.2, z: z + (Math.random() - 0.5) * 1.6,
+        x: x + (Math.random() - 0.5) * 0.9, z: z + (Math.random() - 0.5) * 1.1,
         faceY: 0, value: FAN, scale: 1.0, radius: 1.2, vip: false, bull: false,
       });
     }
@@ -81,16 +81,16 @@ export const LEVELS = [
     name: 'Wedding',
     emoji: '💒',
     mode: 'circuit',
-    controls: 'Up / down only',
+    controls: 'Steer + dive',
     build: buildWeddingWorld,
-    circuit: { startZ: 40, frontTurnZ: -64, backTurnZ: 44, bulge: 7 },
+    circuit: { startZ: 40, frontTurnZ: -64, backTurnZ: 44, halfWidth: 10 },
     layout: weddingLayout,
     howto: [
-      { icon: '👆', html: 'You fly the aisle on <b>auto-pilot</b> — drag <b>up/down</b> to aim your drop' },
+      { icon: '👆', html: 'You loop the aisle on <b>auto-pilot</b> — <b>steer</b> left/right &amp; dive to aim' },
       { icon: '💩', html: '<b>Hold</b> to grow a huge turd; big ones <b>splash whole rows</b>' },
       { icon: '💒', html: 'The <b>couple &amp; priest</b> up front are worth <b>double</b>' },
       { icon: '🔁', html: 'You loop past the crowd again and again — chain combos' },
-      { icon: '⚡', html: 'Gold <b>SUPER TURD</b>s pop up in the crowd for giant turds' },
+      { icon: '⚡', html: 'Gold <b>SUPER TURD</b>s keep popping up for giant turds' },
     ],
   },
   {
@@ -98,16 +98,17 @@ export const LEVELS = [
     name: 'Concert',
     emoji: '🎸',
     mode: 'circuit',
-    controls: 'Up / down only',
+    controls: 'Steer + dive',
     build: buildConcertWorld,
-    circuit: { startZ: 46, frontTurnZ: -66, backTurnZ: 50, bulge: 8 },
+    circuit: { startZ: 46, frontTurnZ: -66, backTurnZ: 50, halfWidth: 13 },
+    mosh: true,
     layout: concertLayout,
     howto: [
-      { icon: '👆', html: 'Auto-pilot over the pit — drag <b>up/down</b> to time your bombs' },
+      { icon: '👆', html: 'Auto-pilot over the pit — <b>steer</b> left/right &amp; dive to aim' },
       { icon: '💩', html: '<b>Hold</b> for a giant turd that <b>splashes a mosh of fans</b>' },
       { icon: '🎸', html: '<b>Band members</b> on the stage are worth <b>double</b>' },
       { icon: '🔁', html: 'Loop the pit over and over — chain massive combos' },
-      { icon: '⚡', html: 'Grab a gold <b>SUPER TURD</b> in the crowd for mayhem' },
+      { icon: '⚡', html: 'Gold <b>SUPER TURD</b>s keep dropping for total mayhem' },
     ],
   },
 ];
