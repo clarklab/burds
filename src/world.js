@@ -390,6 +390,9 @@ const WOD = {
 const smooth = (x) => { x = Math.max(0, Math.min(1, x)); return x * x * (3 - 2 * x); };
 // Shortest signed angle from a to b, wrapped to [-π, π].
 const angDelta = (b, a) => Math.atan2(Math.sin(b - a), Math.cos(b - a));
+// Extra reach (beyond the splat radius) for the "about to get hit" shocked face,
+// so victims gasp a moment before the turd actually lands on them.
+const SHOCK_MARGIN = 2.5;
 
 function buildBullseye() {
   const g = new THREE.Group();
@@ -505,6 +508,7 @@ export class TargetManager {
       side: slot.x < 0 ? -1 : slot.x > 0 ? 1 : (Math.round(slot.z) & 1 ? 1 : -1),
       wodX: 0,
       faces: !special,            // every crowd figure turns to face the turd
+      faceCtl: group.userData.setShocked || null,  // swap to a shocked expression
       alive: true, dying: 0,
     };
     this.targets.push(t);
@@ -561,6 +565,7 @@ export class TargetManager {
       if (tg.faces && !tg.special) {
         const wobble = Math.sin(tg.sway * 0.8 + tg.moshPhase) * 0.1;
         tg.group.rotation.y = this._orientToTurd(tg, dt, tg.slot.faceY || 0) + wobble;
+        this._applyShock(tg);
       }
     }
     // refill empty slots whose respawn timer has elapsed
@@ -667,6 +672,21 @@ export class TargetManager {
     return tg.faceYaw;
   }
 
+  // Swap a figure to a shocked face while a turd is falling toward its splat
+  // zone, back to normal once the threat's gone. Only fires on expression
+  // changes, so it's cheap to call every frame.
+  _applyShock(tg) {
+    if (!tg.faceCtl) return;
+    const d = this._drop;
+    let shock = false;
+    if (d && d.t < d.tFall) {
+      const dx = d.lx - tg.group.position.x;
+      const dz = d.lz - tg.group.position.z;
+      shock = Math.hypot(dx, dz) <= tg.radius + (d.r || 0) + SHOCK_MARGIN;
+    }
+    if (shock !== tg._shocked) { tg._shocked = shock; tg.faceCtl(shock); }
+  }
+
   // March the spawn cursor one gap further ahead and return the new z.
   _advanceFront() {
     this._frontZ -= SPAWN_GAP;
@@ -723,6 +743,7 @@ export class TargetManager {
       bobT: Math.random() * 10,
       // beachgoers, kids and cyclists turn to look up at the incoming turd
       faces: key === 'person' || key === 'kid' || key === 'biker',
+      faceCtl: group.userData.setShocked || null,  // shocked face when about to be splatted
       alive: true,
       dying: 0,
     };
@@ -786,6 +807,7 @@ export class TargetManager {
       if (tg.faces && !tg.special) {
         tg.sway = (tg.sway || 0) + dt;
         tg.group.rotation.y = this._orientToTurd(tg, dt, tg.orbit ? Math.PI / 2 : 0);
+        this._applyShock(tg);
       }
     }
   }

@@ -920,7 +920,9 @@ class Game {
     // ---- targets ---- (pass the live drop so every figure can swivel to face
     // the falling turd, timed to finish squaring up just as it arrives)
     const p = this.poop;
-    const drop = p ? { x: p.pos.x, z: p.pos.z, t: p.t, tFall: p.tFall, id: p.seq } : null;
+    // x/z = the turd's live position (crowd turns to face it); lx/lz/r = the
+    // predicted splat (who's about to get hit → shocked faces).
+    const drop = p ? { x: p.pos.x, z: p.pos.z, lx: p.landing.x, lz: p.landing.z, r: p.blast + p.catch, t: p.t, tFall: p.tFall, id: p.seq } : null;
     this.targets.update(dt, this.clock.elapsedTime, this.pos, drop);
 
     // ---- wall of death (concert) ---- announce the call and the collision
