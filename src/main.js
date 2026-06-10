@@ -215,6 +215,7 @@ class Game {
     this.state = 'menu';
     this.score = 0;
     this.combo = 0;
+    this.maxCombo = 0;
     this.hits = 0;
     this.bullseyes = 0;
     this.timeLeft = ROUND_TIME;
@@ -251,7 +252,10 @@ class Game {
       finalScore: document.getElementById('finalScore'),
       goHits: document.getElementById('goHits'),
       goBest: document.getElementById('goBest'),
+      goBestChip: document.getElementById('goBestChip'),
+      goBestLabel: document.getElementById('goBestLabel'),
       goBullseyes: document.getElementById('goBullseyes'),
+      goCombo: document.getElementById('goCombo'),
       goBlurb: document.getElementById('goBlurb'),
       menuBest: document.getElementById('menuBest'),
       levelPick: document.getElementById('levelPick'),
@@ -518,6 +522,7 @@ class Game {
 
     this.score = 0;
     this.combo = 0;
+    this.maxCombo = 0;
     this.hits = 0;
     this.bullseyes = 0;
     this.timeLeft = ROUND_TIME;
@@ -571,13 +576,16 @@ class Game {
       if (this.levelId === 'beach') localStorage.setItem('gulldump_best', this.score); // legacy key
     }
     this.best = this.bests[this.levelId];
+    const newBest = this.score === this.best && this.score > 0;
     this.dom.finalScore.textContent = this.score;
     this.dom.goHits.textContent = this.hits;
     this.dom.goBest.textContent = this.best;
     this.dom.goBullseyes.textContent = this.bullseyes;
+    this.dom.goCombo.textContent = '\u00d7' + this.maxCombo;
     this.dom.goBlurb.textContent = this._blurb();
-    if (this.score === this.best && this.score > 0) this.dom.goTitle.innerHTML = `<span>NEW BEST!</span>` + iconSvg('trophy', { size: 30, cls: 'title-ic' });
-    else this.dom.goTitle.textContent = "TIME'S UP!";
+    this.dom.goBestChip.classList.toggle('new', newBest);
+    this.dom.goBestLabel.textContent = newBest ? 'NEW BEST' : 'BEST';
+    this.dom.goTitle.textContent = newBest ? 'NEW RECORD!' : "TIME'S UP!";
 
     // leaderboard: show where this run lands, ready to submit
     this._goScore = this.score;
@@ -785,6 +793,7 @@ class Game {
         this.targets.kill(h.tg);
         if (h.tg.special === 'super') superHit = true;
       }
+      this.maxCombo = Math.max(this.maxCombo, this.combo);
       this.score += gain;
       this.dom.score.textContent = this.score;
 

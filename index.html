@@ -116,13 +116,18 @@
   <!-- Game over screen -->
   <div id="gameover" class="overlay hidden">
     <div class="overlay-card">
-      <h1 class="title small" id="goTitle">TIME'S UP!</h1>
+      <h1 class="go-title" id="goTitle">TIME'S UP!</h1>
       <div class="final-score" id="finalScore">0</div>
       <p class="final-label">points</p>
+      <div class="best-chip" id="goBestChip">
+        <svg class="ic title-ic" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M7 4h10v3.5a5 5 0 0 1-10 0z"/><path d="M7 5.2H4v1.3A3.5 3.5 0 0 0 7.5 10"/><path d="M17 5.2h3v1.3A3.5 3.5 0 0 1 16.5 10"/><line x1="12" y1="12.5" x2="12" y2="16.5"/><path d="M8.3 20.5a3.7 3.7 0 0 1 7.4 0z"/></svg>
+        <span class="bc-label" id="goBestLabel">BEST</span>
+        <b id="goBest">0</b>
+      </div>
       <div class="go-stats">
         <div class="go-stat"><span id="goHits">0</span><label>splats</label></div>
-        <div class="go-stat"><span id="goBest">0</span><label>best</label></div>
         <div class="go-stat"><span id="goBullseyes">0</span><label>bullseyes</label></div>
+        <div class="go-stat"><span id="goCombo">0</span><label>top combo</label></div>
       </div>
       <p class="go-blurb" id="goBlurb"></p>
       <div class="board" id="goBoard">
