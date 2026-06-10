@@ -4,7 +4,7 @@ import { readFile } from 'fs/promises';
 import { extname, join, normalize } from 'path';
 
 const ROOT = new URL('..', import.meta.url).pathname;
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.json': 'application/json', '.webmanifest': 'application/manifest+json' };
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.mp3': 'audio/mpeg' };
 
 // In-memory stand-in for the Netlify leaderboard function (Netlify Blobs isn't
 // available in the test harness), so the client's network path is exercised.
@@ -93,6 +93,24 @@ for (let i = 0; i < 3; i++) {
 // read score
 let score = await page.textContent('#scoreValue');
 console.log('score after random poops:', score);
+
+// --- sound design: samples decode and the level ambience is looping ---
+const snd = await page.evaluate(async () => {
+  const g = window.game;
+  for (let i = 0; i < 160; i++) {
+    if (Object.keys(g.audio.buffers).length >= 10 && g.audio._ambNodes.length >= 1) break;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return {
+    decoded: Object.keys(g.audio.buffers).length,
+    ambLayers: g.audio._ambNodes.map((n) => n.key),
+    ambLevel: g.audio._ambLevel,
+  };
+});
+console.log('SOUND TEST:', JSON.stringify(snd));
+if (!(snd.decoded >= 10 && snd.ambLayers.length >= 1 && snd.ambLevel === 'beach')) {
+  throw new Error('ambience/samples did not load: ' + JSON.stringify(snd));
+}
 
 // --- deterministic hit test: drop a target right where a tap would land, fire ---
 const hit = await page.evaluate(async () => {

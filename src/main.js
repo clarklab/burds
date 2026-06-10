@@ -565,12 +565,17 @@ class Game {
     this.dom.gameover.classList.add('hidden');
     this.dom.hud.classList.remove('hidden');
 
+    // venue soundtrack: surf on the beach, the march + murmurs at the
+    // wedding, metal at the gig
+    this.audio.setAmbience(this.levelId);
+
     this.state = 'playing';
   }
 
   endRound() {
     this.state = 'gameover';
     this.input.setEnabled(false);
+    this.audio.stopAmbience();
     if (this.score > (this.bests[this.levelId] || 0)) {
       this.bests[this.levelId] = this.score;
       localStorage.setItem(this._bestKey(this.levelId), this.score);
@@ -804,6 +809,7 @@ class Game {
       if (bestAcc >= BULLSEYE_ACC) this.audio.bullseye();
       else if (bestAcc >= DIRECT_ACC) this.audio.splat(true);
       else this.audio.splat(false);
+      this.audio.crowdScream(hits.length); // "oh no!" from the victims
 
       // extra time for a clean shot, plus a touch for each extra victim splashed
       this.timeLeft += (bestAcc >= BULLSEYE_ACC ? TIME_BONUS_BULLSEYE : TIME_BONUS_HIT) + Math.max(0, hits.length - 1);

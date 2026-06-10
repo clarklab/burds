@@ -9,7 +9,7 @@
  *   activate, takes control, and the page reloads onto the new build.
  *   That's the whole "push changes when the user regains internet" story.
  */
-const CACHE_VERSION = 'v18';
+const CACHE_VERSION = 'v19';
 const CACHE_NAME = `burds-${CACHE_VERSION}`;
 
 // Everything needed to boot and play with zero network.
@@ -33,6 +33,21 @@ const ASSETS = [
   './src/audio.js',
   './src/effects.js',
   './src/scores.js',
+  // soundtrack + SFX samples (Pixabay Content License)
+  './audio/amb-beach.mp3',
+  './audio/amb-wedding.mp3',
+  './audio/amb-murmur.mp3',
+  './audio/amb-concert.mp3',
+  './audio/gull1.mp3',
+  './audio/gull2.mp3',
+  './audio/react1.mp3',
+  './audio/react2.mp3',
+  './audio/react3.mp3',
+  './audio/react4.mp3',
+  './audio/react5.mp3',
+  './audio/react6.mp3',
+  './audio/react7.mp3',
+  './audio/react8.mp3',
 ];
 
 self.addEventListener('install', (event) => {
