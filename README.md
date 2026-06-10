@@ -72,6 +72,11 @@ the drops as targets stream toward you.
   it — when it's tight, the target will be hit, so that's your cue to **release**.
 - **Hold the 💩 button longer** for a **bigger turd** (and a bigger splat). Hold
   time only changes the turd's size now, never the range.
+- The bird **cycles through four turd shapes** as you drop — the classic 💩
+  swirl, a long **Mr. Hanky log**, a tight clump of **BB pellets**, and a
+  white-brown **liquidy splatter** that stabs down like a lightning bolt. They
+  all fly the exact same physics arc; each just **splats differently** on impact
+  (a round pop, a skidding smear, a wide pellet spray, or a wet starburst).
 - Every drop leaves a flat splat on the ground; a **direct hit** adds an extra
   **splash** burst.
 - Land near a target and the game drops into **bullet time**, swinging the
@@ -168,4 +173,11 @@ node test/venues.mjs
 
 ```bash
 node test/lineup.mjs
+```
+
+…and a line-up of the four turd shapes with their ground splats and target
+splashes, for tuning the poop art:
+
+```bash
+node test/poopshapes.mjs   # writes test/shot-poopshapes.png
 ```

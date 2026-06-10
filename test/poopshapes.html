@@ -1,0 +1,64 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>html,body{margin:0;background:#cdb892;overflow:hidden}</style>
+<script type="importmap">{ "imports": { "three": "../vendor/three.module.js" } }</script>
+</head>
+<body>
+<script type="module">
+import * as THREE from 'three';
+import { buildPoop, POOP_TYPES } from '../src/models.js';
+import { Effects } from '../src/effects.js';
+
+const W = 1100, H = 620;
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(W, H);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xcdb892);
+const cam = new THREE.PerspectiveCamera(45, W / H, 0.1, 200);
+cam.position.set(0, 5.5, 16);
+cam.lookAt(0, 1.2, 0);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+const dir = new THREE.DirectionalLight(0xffffff, 0.9);
+dir.position.set(5, 12, 8);
+scene.add(dir);
+
+// ground
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), new THREE.MeshLambertMaterial({ color: 0xcdb892 }));
+ground.rotation.x = -Math.PI / 2;
+scene.add(ground);
+
+const effects = new Effects(scene);
+
+// one column per shape: the floating projectile up top, the splat below
+const xs = [-7.5, -2.5, 2.5, 7.5];
+POOP_TYPES.forEach((type, i) => {
+  const x = xs[i];
+  const g = buildPoop(type);
+  g.scale.setScalar(2.0);
+  g.position.set(x, 4.2, 0);
+  if (type !== 'splatter') { g.rotation.x = 0.5; g.rotation.z = 0.4; }
+  scene.add(g);
+  // a ground splat + a target splash for each
+  const pos = new THREE.Vector3(x, 0.12, 1.5);
+  effects.splat(pos, true, 1.4, false, type);
+  effects.splash(pos, 1.6, false, type);
+});
+
+// run the effects sim forward a bit so chunks land/settle, then render
+let frames = 0;
+function tick() {
+  effects.update(1 / 60);
+  renderer.render(scene, cam);
+  frames++;
+  if (frames < 70) requestAnimationFrame(tick);
+  else window.__done = true;
+}
+tick();
+</script>
+</body>
+</html>
