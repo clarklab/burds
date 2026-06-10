@@ -2,10 +2,126 @@ import * as THREE from 'three';
 import {
   buildPerson, buildKid, buildBiker, buildPicnic, buildCar,
   buildUmbrella, buildPalm, buildCypress, buildPine, buildRock,
-  buildSuperTurd, mat,
+  buildSuperTurd, mat, makeCanvasTexture,
   buildArch, buildFlowerStand, buildStage, buildSpeakerStack, buildBarrier,
   buildCloud, buildBoat, buildTowel, buildLifeguardTower, buildSandcastle,
 } from './models.js';
+
+// ---------------------------------------------------------------------------
+// Painted-surface helpers (PS2-style): every texture is drawn to a canvas at
+// runtime, so the game still ships zero asset files.
+// ---------------------------------------------------------------------------
+
+// Soft radial glow for billboard light blooms (sun, stage wash).
+function glowTexture() {
+  return makeCanvasTexture(128, (ctx, w, h) => {
+    const g = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
+    g.addColorStop(0, 'rgba(255,255,255,1)');
+    g.addColorStop(0.35, 'rgba(255,255,255,0.55)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+  });
+}
+
+// Weathered boardwalk planks running across the walkway.
+function plankTexture() {
+  return makeCanvasTexture(128, (ctx, w, h) => {
+    const base = ['#c9a06b', '#bf935f', '#d2a974', '#c39a64'];
+    const rows = 4;
+    for (let i = 0; i < rows; i++) {
+      const y = (i * h) / rows;
+      ctx.fillStyle = base[i % base.length];
+      ctx.fillRect(0, y, w, h / rows);
+      // grain streaks
+      ctx.strokeStyle = 'rgba(90,60,30,0.25)';
+      ctx.lineWidth = 1;
+      for (let s = 0; s < 5; s++) {
+        const gy = y + 3 + Math.random() * (h / rows - 6);
+        ctx.beginPath();
+        ctx.moveTo(0, gy);
+        ctx.bezierCurveTo(w * 0.3, gy + (Math.random() - 0.5) * 4, w * 0.7, gy + (Math.random() - 0.5) * 4, w, gy);
+        ctx.stroke();
+      }
+      // seam between planks
+      ctx.fillStyle = 'rgba(60,38,20,0.65)';
+      ctx.fillRect(0, y, w, 2);
+      // nails
+      ctx.fillStyle = 'rgba(50,40,35,0.8)';
+      ctx.beginPath(); ctx.arc(8, y + h / rows / 2, 1.6, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.arc(w - 8, y + h / rows / 2, 1.6, 0, 7); ctx.fill();
+    }
+  }, { repeat: [1, 60] });
+}
+
+// Fine speckle that multiplies over a ground color (sand grain / mown grass).
+function speckleTexture(repeat) {
+  return makeCanvasTexture(128, (ctx, w, h) => {
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, w, h);
+    for (let i = 0; i < 420; i++) {
+      ctx.fillStyle = Math.random() < 0.5 ? 'rgba(120,90,50,0.16)' : 'rgba(255,255,255,0.5)';
+      ctx.fillRect((Math.random() * w) | 0, (Math.random() * h) | 0, 1.6, 1.6);
+    }
+  }, { repeat: [repeat, repeat] });
+}
+
+// The PS2 sea: a vertex-waved plane with painted depth gradient, sun glints
+// and sparkle, fading into the scene fog. Update `time` each frame.
+function buildWater(fogColor, fogNear, fogFar) {
+  const uniforms = {
+    time: { value: 0 },
+    fogColor: { value: new THREE.Color(fogColor) },
+    fogNear: { value: fogNear },
+    fogFar: { value: fogFar },
+    deep: { value: new THREE.Color(0x1b7fc4) },
+    shallow: { value: new THREE.Color(0x6fd2e4) },
+    sunDir: { value: new THREE.Vector3(0.45, 0.7, 0.3).normalize() },
+  };
+  const material = new THREE.ShaderMaterial({
+    transparent: true,
+    uniforms,
+    vertexShader: `
+      uniform float time;
+      varying vec3 vNorm;
+      varying vec3 vWorld;
+      varying float vFogDepth;
+      void main() {
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        float a1 = wp.x * 0.12 + time * 1.1;
+        float a2 = wp.z * 0.09 - time * 0.8 + wp.x * 0.05;
+        wp.y += sin(a1) * 0.35 + sin(a2) * 0.3;
+        float dx = cos(a1) * 0.042 + cos(a2) * 0.015;
+        float dz = cos(a2) * 0.027;
+        vNorm = normalize(vec3(-dx, 1.0, -dz));
+        vWorld = wp.xyz;
+        vec4 mv = viewMatrix * wp;
+        vFogDepth = -mv.z;
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: `
+      uniform vec3 deep; uniform vec3 shallow; uniform vec3 sunDir;
+      uniform vec3 fogColor; uniform float fogNear; uniform float fogFar; uniform float time;
+      varying vec3 vNorm; varying vec3 vWorld; varying float vFogDepth;
+      void main() {
+        float sh = smoothstep(-200.0, -65.0, vWorld.x);
+        vec3 col = mix(deep, shallow, sh);
+        vec3 viewDir = normalize(cameraPosition - vWorld);
+        vec3 h = normalize(viewDir + sunDir);
+        float spec = pow(max(dot(vNorm, h), 0.0), 90.0);
+        col += vec3(1.0, 0.95, 0.8) * spec * 0.9;
+        float sp = sin(vWorld.x * 1.7 + time * 2.0) * sin(vWorld.z * 1.3 - time * 1.6);
+        col += vec3(0.1) * smoothstep(0.86, 1.0, sp);
+        float f = smoothstep(fogNear, fogFar, vFogDepth);
+        gl_FragColor = vec4(mix(col, fogColor, f), 0.94);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+  });
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(600, 1400, 56, 96), material);
+  mesh.rotation.x = -Math.PI / 2;
+  return { mesh, uniforms };
+}
 
 export const WORLD_RADIUS = 130;     // playable radius (ground disc)
 
@@ -47,9 +163,9 @@ export function buildWorld(scene, renderer) {
   scene.add(root);
 
   // Lights
-  const hemi = new THREE.HemisphereLight(0xcdeffc, 0xe8d9a8, 0.95);
+  const hemi = new THREE.HemisphereLight(0xcdeffc, 0xe8d9a8, 1.05);
   root.add(hemi);
-  const sun = new THREE.DirectionalLight(0xfff3d6, 1.5);
+  const sun = new THREE.DirectionalLight(0xfff3d6, 1.75);
   sun.position.set(60, 120, 40);
   sun.castShadow = true;
   sun.shadow.mapSize.set(1024, 1024); // modest for mobile GPUs
@@ -79,27 +195,36 @@ export function buildWorld(scene, renderer) {
   const sky = new THREE.Mesh(skyGeo, skyMat);
   root.add(sky);
 
-  // The sun billboard (kept at a fixed offset from the bird).
-  const sunDisc = new THREE.Mesh(new THREE.CircleGeometry(28, 24), new THREE.MeshBasicMaterial({ color: 0xfff7cf }));
+  // The sun billboard with a soft additive bloom around it (the classic PS2
+  // billboard-glow trick — reads like post-processing for one sprite).
+  const sunDisc = new THREE.Mesh(new THREE.CircleGeometry(28, 24), new THREE.MeshBasicMaterial({ color: 0xfff7cf, fog: false }));
   const sunOffset = new THREE.Vector3(150, 180, -260);
   sunDisc.position.copy(sunOffset);
   root.add(sunDisc);
+  const sunGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: glowTexture(), color: 0xffefb8, transparent: true, opacity: 0.9,
+    blending: THREE.AdditiveBlending, depthWrite: false, fog: false,
+  }));
+  sunGlow.scale.set(150, 150, 1);
+  root.add(sunGlow);
 
-  // Ground: big sand disc that re-centres on the bird (a circle looks identical
-  // from any centre, so the slide is seamless). Reaches past the fog wall so
-  // its rim never shows.
+  // Ground: big sand disc with a painted grain speckle, re-centred on the bird
+  // (snapped to the texture period so the grain doesn't visibly slide).
+  const SAND_R = WORLD_RADIUS + 100;
+  const SAND_REPEAT = 48;
+  const SAND_PERIOD = (2 * SAND_R) / SAND_REPEAT;
   const sand = new THREE.Mesh(
-    new THREE.CircleGeometry(WORLD_RADIUS + 100, 48),
-    mat(0xf2d79b),
+    new THREE.CircleGeometry(SAND_R, 48),
+    new THREE.MeshLambertMaterial({ color: 0xf2d79b, map: speckleTexture(SAND_REPEAT) }),
   );
   sand.rotation.x = -Math.PI / 2;
   sand.receiveShadow = true;
   root.add(sand);
 
-  // Sea: a long plane running along the lane on the far left side, wide and
-  // long enough that every edge dies inside the fog.
-  const sea = new THREE.Mesh(new THREE.PlaneGeometry(600, 1400), mat(0x2aa3d6, { transparent: true, opacity: 0.92 }));
-  sea.rotation.x = -Math.PI / 2;
+  // Sea: an animated wave shader running along the lane on the far left side,
+  // wide and long enough that every edge dies inside the fog.
+  const water = buildWater(0xcdeffc, 200, 560);
+  const sea = water.mesh;
   sea.position.set(-370, 0.05, 0);
   root.add(sea);
   // Wet shoreline band between the sea and the sand.
@@ -108,17 +233,33 @@ export function buildWorld(scene, renderer) {
   shore.position.set(-92, 0.06, 0);
   root.add(shore);
 
-  // Courseway: a boardwalk strip running ALONG the lane (down -Z), with dashes
-  // marching down the middle. Snapping its z to the dash pitch keeps the dashes
-  // from visibly sliding as it scrolls with the bird.
+  // Courseway: a weathered-plank boardwalk running ALONG the lane (down -Z),
+  // with pale guide dashes marching down the middle. Both the plank texture
+  // and the dashes snap to their world-space pitch so nothing slides as the
+  // strip scrolls with the bird.
   const DASH_PITCH = 12;
-  const road = new THREE.Mesh(new THREE.PlaneGeometry(COURSE_HALF * 2 + 6, 1200), mat(0x6d6f78));
+  const ROAD_LEN = 1200;
+  const PLANK_PERIOD = ROAD_LEN / 60; // must match plankTexture repeat
+  const road = new THREE.Mesh(
+    new THREE.PlaneGeometry(COURSE_HALF * 2 + 6, ROAD_LEN),
+    new THREE.MeshLambertMaterial({ map: plankTexture() }),
+  );
   road.rotation.x = -Math.PI / 2;
   road.position.set(0, 0.08, 0);
+  road.receiveShadow = true;
   root.add(road);
+  // boardwalk edge skirts
+  for (const sx of [-1, 1]) {
+    const skirt = new THREE.Mesh(new THREE.PlaneGeometry(0.9, ROAD_LEN), mat(0x8a6a42));
+    skirt.rotation.x = -Math.PI / 2;
+    skirt.position.set(sx * (COURSE_HALF + 3.2), 0.085, 0);
+    root.add(skirt);
+    skirt.userData.isSkirt = true;
+  }
+  const skirts = root.children.filter((c) => c.userData.isSkirt);
   const dashes = new THREE.Group();
   for (let i = -50; i < 50; i++) {
-    const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 5), mat(0xffe066));
+    const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 5), mat(0xfdf2d0));
     dash.rotation.x = -Math.PI / 2;
     dash.position.set(0, 0.1, i * DASH_PITCH);
     dashes.add(dash);
@@ -248,10 +389,15 @@ export function buildWorld(scene, renderer) {
       const bx = birdPos.x, bz = birdPos.z;
       sky.position.set(bx, 0, bz);
       sunDisc.position.set(bx + sunOffset.x, sunOffset.y, bz + sunOffset.z);
-      sand.position.set(bx, 0, bz);
+      sunGlow.position.copy(sunDisc.position);
+      // textured ground surfaces snap to their texture period so the painted
+      // grain/planks stream past instead of gliding along with the bird
+      sand.position.set(Math.round(bx / SAND_PERIOD) * SAND_PERIOD, 0, Math.round(bz / SAND_PERIOD) * SAND_PERIOD);
+      water.uniforms.time.value = clock;
       sea.position.z = bz;
       shore.position.z = bz;
-      road.position.z = bz;
+      road.position.z = Math.round(bz / PLANK_PERIOD) * PLANK_PERIOD;
+      for (const sk of skirts) sk.position.z = bz;
       dashes.position.z = Math.round(bz / DASH_PITCH) * DASH_PITCH;
       // shadows follow the bird down the lane
       sun.position.set(bx + 60, 120, bz + 40);
@@ -335,9 +481,9 @@ export function buildWeddingWorld(scene, renderer) {
   const root = new THREE.Group();
   scene.add(root);
 
-  const hemi = new THREE.HemisphereLight(0xffffff, 0xd8e8c8, 1.05);
+  const hemi = new THREE.HemisphereLight(0xffffff, 0xd8e8c8, 1.15);
   root.add(hemi);
-  const sun = new THREE.DirectionalLight(0xfff4e0, 1.4);
+  const sun = new THREE.DirectionalLight(0xfff4e0, 1.6);
   sun.position.set(40, 120, 80);
   sun.castShadow = true;
   sun.shadow.mapSize.set(1024, 1024);
@@ -351,8 +497,11 @@ export function buildWeddingWorld(scene, renderer) {
   const sky = gradientSky(0x7fc6f0, 0xeaf6ff);
   root.add(sky);
 
-  // Lawn
-  const lawn = new THREE.Mesh(new THREE.CircleGeometry(WORLD_RADIUS + 40, 48), mat(0x86c06a));
+  // Lawn (painted mown-grass speckle — the venue is static, so no sliding)
+  const lawn = new THREE.Mesh(
+    new THREE.CircleGeometry(WORLD_RADIUS + 40, 48),
+    new THREE.MeshLambertMaterial({ color: 0x86c06a, map: speckleTexture(40) }),
+  );
   lawn.rotation.x = -Math.PI / 2; lawn.receiveShadow = true;
   root.add(lawn);
 
@@ -496,9 +645,9 @@ export function buildConcertWorld(scene, renderer) {
   const root = new THREE.Group();
   scene.add(root);
 
-  const hemi = new THREE.HemisphereLight(0x4a4470, 0x101018, 0.7);
+  const hemi = new THREE.HemisphereLight(0x4a4470, 0x101018, 0.95);
   root.add(hemi);
-  const key = new THREE.DirectionalLight(0xa6b6ff, 0.8);
+  const key = new THREE.DirectionalLight(0xa6b6ff, 1.1);
   key.position.set(20, 90, 60);
   key.castShadow = true;
   key.shadow.mapSize.set(1024, 1024);
@@ -509,8 +658,8 @@ export function buildConcertWorld(scene, renderer) {
   key.shadow.bias = -0.0004;
   root.add(key);
   // A couple of colored point lights wash the stage for concert mood.
-  const stageLight1 = new THREE.PointLight(0xff3b6b, 0.9, 160); stageLight1.position.set(-16, 18, -46); root.add(stageLight1);
-  const stageLight2 = new THREE.PointLight(0x3bdcff, 0.9, 160); stageLight2.position.set(16, 18, -46); root.add(stageLight2);
+  const stageLight1 = new THREE.PointLight(0xff3b6b, 1.25, 160); stageLight1.position.set(-16, 18, -46); root.add(stageLight1);
+  const stageLight2 = new THREE.PointLight(0x3bdcff, 1.25, 160); stageLight2.position.set(16, 18, -46); root.add(stageLight2);
 
   const sky = gradientSky(0x0a0a14, 0x241f3a);
   root.add(sky);
@@ -601,8 +750,8 @@ export function buildConcertWorld(scene, renderer) {
       sky.position.set(birdPos.x, 0, birdPos.z);
       // strobe/pulse the colored stage lamps + point lights for a gig feel
       t += 0.016;
-      stageLight1.intensity = 0.7 + Math.sin(t * 6) * 0.4;
-      stageLight2.intensity = 0.7 + Math.sin(t * 6 + 2) * 0.4;
+      stageLight1.intensity = 1.0 + Math.sin(t * 6) * 0.5;
+      stageLight2.intensity = 1.0 + Math.sin(t * 6 + 2) * 0.5;
       for (let i = 0; i < lamps.length; i++) {
         lamps[i].material.opacity = 1;
         lamps[i].visible = ((Math.sin(t * 5 + i) > -0.3));
@@ -932,7 +1081,8 @@ export class TargetManager {
     // yaw (facing the falling turd) is handled centrally by _orientToTurd.
     tg.group.rotation.z = tg.side * m.lean + Math.sin(tg.sway * tg.moshFreq * 0.5 + ph) * 0.12 * (1 - m.face);
 
-    // raised arms pump to the beat (the panic pose owns them while shocked)
+    // raised arms pump to the beat (the panic pose owns them while shocked),
+    // legs tuck under each jump
     const arms = tg.group.userData.arms;
     if (arms && !tg._shocked) {
       const pump = Math.sin(tg.sway * tg.moshFreq + ph);
@@ -940,6 +1090,12 @@ export class TargetManager {
         a.rotation.z = a.userData.side * (2.45 + pump * 0.22);
         a.rotation.x = pump * 0.3;
       }
+    }
+    const legs = tg.group.userData.legs;
+    if (legs) {
+      const tuck = (jump / Math.max(0.001, tg.moshAmp)) * 0.45;
+      legs[0].rotation.x = -tuck;
+      legs[1].rotation.x = -tuck * 0.7;
     }
   }
 
@@ -1151,12 +1307,19 @@ export class TargetManager {
       stepK = Math.abs(v);
       g.position.y = Math.abs(Math.sin(w.phase * 6)) * 0.07 * stepK;
     }
-    // arms swing opposite each other in time with the steps
+    // arms and legs swing opposite each other in time with the steps —
+    // a real stride now that legs are hip-hinged
     const arms = g.userData.arms;
+    const legs = g.userData.legs;
+    const gait = w.mode === 'orbit' ? 5 : 6;
+    const s = Math.sin(w.phase * gait) * stepK;
     if (arms) {
-      const s = Math.sin(w.phase * (w.mode === 'orbit' ? 5 : 6)) * 0.55 * stepK;
-      arms[0].rotation.x = s;
-      arms[1].rotation.x = -s;
+      arms[0].rotation.x = s * 0.55;
+      arms[1].rotation.x = -s * 0.55;
+    }
+    if (legs) {
+      legs[0].rotation.x = -s * 0.6;
+      legs[1].rotation.x = s * 0.6;
     }
     w.lastX = g.position.x;
     w.lastZ = g.position.z;

@@ -122,6 +122,11 @@ class Game {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // Filmic color grading — soft highlight rolloff and richer mids, the
+    // single biggest "console game" lighting upgrade. Scene lights are tuned
+    // ~25% hotter to balance the ACES curve.
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.02;
 
     // Mobile robustness: if the GPU context dies (tab reclaimed in the
     // background, driver hiccup) reload onto a fresh context rather than

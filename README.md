@@ -102,9 +102,11 @@ out on the bay, clouds drifting overhead and hazy headlands on the horizon.
 
 ## Tech notes
 
-- **Procedural low-poly models** — the bird, people, kid, biker, picnic, car,
-  palms and umbrellas are all generated from primitives with flat shading. No
-  external FBX/OBJ assets to download or break.
+- **Procedural PS2-style models** — the bird is a smooth lathe-turned gull and
+  the whole cast is built from capsule limbs and painted canvas textures
+  (cloth weaves, boardwalk planks, sand grain, animated water), all generated
+  at runtime. No external FBX/OBJ/texture assets to download or break, and
+  ACES filmic tone mapping grades the final frame.
 - **Built for phones** — primitive geometries are cached and shared across the
   whole cast (a 125-person crowd shares one torso buffer), every static mesh
   has its matrix frozen so per-frame CPU stays low, render resolution steps
@@ -152,4 +154,10 @@ screenshots each one (`test/shot-*.png`) and fails on any console error:
 
 ```bash
 node test/venues.mjs
+```
+
+…and a close-up character line-up portrait for art QA:
+
+```bash
+node test/lineup.mjs
 ```

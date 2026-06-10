@@ -1,30 +1,94 @@
 import * as THREE from 'three';
 
 // ---------------------------------------------------------------------------
-// Low-poly procedural model builders. Everything is built from primitives with
-// flat shading so it gets that faceted, papercraft look without any external
-// asset files (no FBX/OBJ to download or break).
+// Procedural model builders, PS2-era style: smooth-shaded rounded bodies
+// (capsules, lathes, spheres) wearing canvas-painted textures, gouraud-lit.
+// Still zero external asset files — every texture is drawn to a canvas at
+// runtime, so the game stays a fully-offline, no-build PWA.
 // ---------------------------------------------------------------------------
 
 const mats = new Map();
-// Cached flat-shaded materials keyed by color so we don't make thousands.
+// Cached smooth-shaded materials keyed by color. (Polyhedron primitives like
+// the rocks' dodecahedrons are non-indexed, so they keep their faceted look
+// automatically; spheres/capsules/cylinders now shade smooth.)
 export function mat(color, opts = {}) {
   const key = color + JSON.stringify(opts);
   if (mats.has(key)) return mats.get(key);
-  const m = new THREE.MeshLambertMaterial({ color, flatShading: true, ...opts });
+  const m = new THREE.MeshLambertMaterial({ color, ...opts });
   mats.set(key, m);
   return m;
 }
 
+// Draw a texture to an offscreen canvas. The workhorse behind every "painted"
+// surface in the game — cloth, wood, water sparkle, glows.
+export function makeCanvasTexture(size, draw, opts = {}) {
+  const c = document.createElement('canvas');
+  c.width = opts.w || size;
+  c.height = opts.h || size;
+  const ctx = c.getContext('2d');
+  draw(ctx, c.width, c.height);
+  const t = new THREE.CanvasTexture(c);
+  t.anisotropy = 4;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  if (opts.repeat) t.repeat.set(opts.repeat[0], opts.repeat[1]);
+  return t;
+}
+
+const hex = (c) => '#' + c.toString(16).padStart(6, '0');
+// Lighten/darken a hex color by k (-1..1) for painted shading.
+function shade(c, k) {
+  const r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255;
+  const f = (v) => Math.max(0, Math.min(255, Math.round(k < 0 ? v * (1 + k) : v + (255 - v) * k)));
+  return (f(r) << 16) | (f(g) << 8) | f(b);
+}
+
+// Cached cloth materials: a base color with a painted pattern (solid weave,
+// hoops, dots) plus a baked vertical shade gradient — the PS2 "textured
+// gouraud" look. Bounded key space, shared across the whole crowd.
+const cloths = new Map();
+function clothMat(color, pattern = 'solid') {
+  const key = color + ':' + pattern;
+  if (cloths.has(key)) return cloths.get(key);
+  const tex = makeCanvasTexture(64, (ctx, w, h) => {
+    ctx.fillStyle = hex(color);
+    ctx.fillRect(0, 0, w, h);
+    // soft weave noise
+    ctx.fillStyle = hex(shade(color, 0.12));
+    for (let i = 0; i < 90; i++) ctx.fillRect((Math.random() * w) | 0, (Math.random() * h) | 0, 2, 1);
+    ctx.fillStyle = hex(shade(color, -0.12));
+    for (let i = 0; i < 90; i++) ctx.fillRect((Math.random() * w) | 0, (Math.random() * h) | 0, 2, 1);
+    if (pattern === 'hoops') {
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      for (let y = 4; y < h; y += 16) ctx.fillRect(0, y, w, 6);
+    } else if (pattern === 'dots') {
+      ctx.fillStyle = 'rgba(255,255,255,0.8)';
+      for (let y = 6; y < h; y += 14) for (let x = ((y / 14) | 0) % 2 ? 4 : 11; x < w; x += 14) {
+        ctx.beginPath(); ctx.arc(x, y, 2.6, 0, 7); ctx.fill();
+      }
+    }
+    // baked top-light / bottom-shade gradient (fake AO)
+    const gr = ctx.createLinearGradient(0, 0, 0, h);
+    gr.addColorStop(0, 'rgba(255,255,255,0.16)');
+    gr.addColorStop(0.55, 'rgba(0,0,0,0)');
+    gr.addColorStop(1, 'rgba(0,0,0,0.22)');
+    ctx.fillStyle = gr;
+    ctx.fillRect(0, 0, w, h);
+  });
+  const m = new THREE.MeshLambertMaterial({ map: tex });
+  cloths.set(key, m);
+  return m;
+}
+const CLOTH_PATTERNS = ['solid', 'solid', 'hoops', 'dots'];
+
 // Cached primitive geometries. The crowds stamp out hundreds of identically
-// sized boxes (126 fans share one torso geometry, etc.), so sharing the
+// sized parts (126 fans share one torso geometry, etc.), so sharing the
 // buffers is a big GPU-memory and upload win on phones. Keys quantize to 3
 // decimals; never mutate a geometry returned from these helpers.
 const geos = new Map();
 function geo(kind, ...args) {
   const key = kind + ':' + args.map((a) => (+a).toFixed(3)).join(',');
   if (!geos.has(key)) {
-    const G = { box: THREE.BoxGeometry, cyl: THREE.CylinderGeometry, sphere: THREE.SphereGeometry, cone: THREE.ConeGeometry }[kind];
+    const G = { box: THREE.BoxGeometry, cyl: THREE.CylinderGeometry, sphere: THREE.SphereGeometry, cone: THREE.ConeGeometry, capsule: THREE.CapsuleGeometry }[kind];
     geos.set(key, new G(...args));
   }
   return geos.get(key);
@@ -62,6 +126,18 @@ function sphere(r, color, seg = 8) {
 function cone(r, h, color, seg = 8) {
   const m = new THREE.Mesh(geo('cone', r, h, seg), mat(color));
   m.castShadow = true;
+  return m;
+}
+// A rounded capsule limb/body segment — `len` is the straight middle section;
+// total height = len + 2r. `material` may be a color or a Material (cloth).
+function capsule(r, len, material, x = 0, y = 0, z = 0, radial = 8) {
+  const m = new THREE.Mesh(
+    geo('capsule', r, len, 3, radial),
+    material && material.isMaterial ? material : mat(material),
+  );
+  m.position.set(x, y, z);
+  m.castShadow = true;
+  m.receiveShadow = true;
   return m;
 }
 
@@ -191,36 +267,32 @@ export function buildSeagull() {
   const tipColor = 0x2b2b30;    // near-black wingtips
   const beakColor = 0xffa322;   // orange beak/feet
 
-  // Body: a faceted low-poly torpedo (sleek, not a fat oval). Faceted via flat
-  // shading on a 0-subdivision icosahedron.
-  const body = new THREE.Mesh(new THREE.IcosahedronGeometry(0.95, 0), mat(bodyColor));
-  body.scale.set(0.7, 0.74, 1.8);
+  // Body: a smooth lathe-turned torpedo with a full chest tapering to the
+  // tail — an actual gull silhouette, gouraud-shaded.
+  const profile = [
+    [0.02, -1.65], [0.2, -1.25], [0.4, -0.62], [0.58, 0.0],
+    [0.66, 0.52], [0.63, 0.95], [0.46, 1.25], [0.2, 1.45], [0.02, 1.52],
+  ].map(([x, y]) => new THREE.Vector2(x, y));
+  const body = new THREE.Mesh(new THREE.LatheGeometry(profile, 14), mat(bodyColor));
+  body.rotation.x = -Math.PI / 2;     // lathe axis (+Y) becomes forward (-Z)
+  body.scale.set(0.95, 1, 0.96);
+  body.position.y = 0.05;
   body.castShadow = true;
   g.add(body);
 
   // Gray mantle laid over the back so the bird reads "seagull", not "dove".
-  const saddle = new THREE.Mesh(new THREE.IcosahedronGeometry(0.78, 0), mat(mantle));
-  saddle.scale.set(0.62, 0.42, 1.45);
+  const saddle = sphere(0.62, mantle, 10);
+  saddle.scale.set(0.78, 0.5, 1.85);
   saddle.position.set(0, 0.34, 0.12);
-  saddle.castShadow = true;
   g.add(saddle);
 
-  // Fuller breast up front so the chest reads round, tapering to a slim tail.
-  const breast = new THREE.Mesh(new THREE.IcosahedronGeometry(0.62, 0), mat(bodyColor));
-  breast.scale.set(0.82, 0.82, 1.05);
-  breast.position.set(0, -0.08, -0.75);
-  breast.castShadow = true;
-  g.add(breast);
-
-  // Neck bridging breast to head, then a small rounded head set forward.
-  const neck = new THREE.Mesh(new THREE.IcosahedronGeometry(0.34, 0), mat(bodyColor));
-  neck.scale.set(0.9, 1.0, 1.2);
-  neck.position.set(0, 0.26, -1.12);
-  neck.castShadow = true;
+  // Neck flowing up from the chest to a smooth round head set forward.
+  const neck = capsule(0.24, 0.3, bodyColor, 0, 0.22, -1.1, 10);
+  neck.rotation.x = 0.55;
   g.add(neck);
-  const head = new THREE.Mesh(new THREE.IcosahedronGeometry(0.42, 0), mat(bodyColor));
-  head.position.set(0, 0.5, -1.42);
-  head.castShadow = true;
+  const head = sphere(0.38, bodyColor, 12);
+  head.scale.set(0.92, 0.95, 1.1);
+  head.position.set(0, 0.5, -1.45);
   g.add(head);
 
   // Short orange beak pointing forward (-Z), with the herring gull's red spot.
@@ -332,62 +404,101 @@ export function buildSeagull() {
 export function buildPerson({ scale = 1, shirt = pick(SHIRTS), skin = pick(SKIN), pants = 0x394a59, hat = false, shoes = false, tank = true, jitter = true } = {}) {
   const g = new THREE.Group();
   const legH = 0.9;
-  const sleeve = tank && Math.random() < 0.3 ? skin : shirt; // sleeveless tops
+  const formal = tank === false;
+  const cloth = clothMat(shirt, formal ? 'solid' : pick(CLOTH_PATTERNS));
+  const pantsM = clothMat(pants, 'solid');
+  // sleeves: suits get full sleeves, beach tops are short-sleeved, and some
+  // casual tops are sleeveless tanks
+  const tankTop = !formal && Math.random() < 0.28;
+  const upperArmM = tankTop ? mat(skin) : cloth;
+  const foreArmM = formal ? cloth : mat(skin);
   const shorts = shoes && Math.random() < 0.45;
+
+  // legs — hip-hinged groups (userData.legs) so they stride in the walk cycle
+  const legs = [];
+  const shoeC = pick([0xffffff, 0x2a2a30, 0xff6b6b, 0x6a8eff]);
   for (const sx of [-1, 1]) {
-    if (shorts) {
-      g.add(box(0.36, 0.5, 0.36, pants, 0.22 * sx, 0.65, 0));  // shorts
-      g.add(box(0.28, 0.42, 0.28, skin, 0.22 * sx, 0.21, 0));  // bare shin
-    } else {
-      g.add(box(0.34, legH, 0.34, pants, 0.22 * sx, legH / 2, 0));
-    }
-    if (shoes) g.add(box(0.36, 0.14, 0.5, pick([0xffffff, 0x2a2a30, 0xff6b6b, 0x6a8eff]), 0.22 * sx, 0.07, -0.05));
+    const hip = new THREE.Group();
+    hip.position.set(0.22 * sx, legH + 0.05, 0);
+    hip.add(capsule(0.17, 0.32, pantsM, 0, -0.27, 0));                       // thigh (or shorts)
+    hip.add(capsule(0.135, 0.3, shorts ? skin : pantsM, 0, -0.64, 0.01));    // calf: bare if shorts
+    const foot = sphere(0.16, shoes ? shoeC : skin, 7);
+    foot.scale.set(1, 0.55, 1.55);
+    foot.position.set(0, -0.92, -0.08);
+    hip.add(foot);
+    hip.userData.side = sx;
+    g.add(hip);
+    legs.push(hip);
   }
-  const torso = box(0.95, 1.05, 0.55, shirt, 0, legH + 0.52, 0);
+
+  // torso: a rounded capsule wearing the painted cloth
+  const torso = capsule(0.42, 0.42, cloth, 0, legH + 0.54, 0, 10);
+  torso.scale.set(1.12, 1, 0.62);
   g.add(torso);
-  // arms — each hangs from a shoulder pivot so it can be posed/animated
+
+  // arms — shoulder pivots (userData.arms) with a baked elbow bend
   const arms = [];
   for (const sx of [-1, 1]) {
     const shoulder = new THREE.Group();
-    shoulder.position.set(0.62 * sx, legH + 1.02, 0);
-    shoulder.add(box(0.26, 0.95, 0.28, sleeve, 0, -0.47, 0));
-    shoulder.add(box(0.24, 0.24, 0.26, skin, 0.04 * sx, -0.94, 0)); // hand
-    shoulder.rotation.z = 0.06 * sx;
+    shoulder.position.set(0.6 * sx, legH + 1.02, 0);
+    shoulder.add(capsule(0.135, 0.3, upperArmM, 0, -0.22, 0));
+    const fore = capsule(0.11, 0.28, foreArmM, 0.02 * sx, -0.62, -0.05);
+    fore.rotation.x = 0.22;
+    shoulder.add(fore);
+    const hand = sphere(0.13, skin, 7);
+    hand.position.set(0.03 * sx, -0.9, -0.12);
+    shoulder.add(hand);
+    shoulder.rotation.z = 0.08 * sx;
     shoulder.userData.side = sx;
     g.add(shoulder);
     arms.push(shoulder);
   }
-  const neck = box(0.26, 0.18, 0.26, skin, 0, legH + 1.12, 0);
-  g.add(neck);
-  const head = box(0.62, 0.62, 0.6, skin, 0, legH + 1.5, 0);
+
+  // neck + smooth round head with the shared painted face
+  g.add(capsule(0.12, 0.12, skin, 0, legH + 1.14, 0));
+  const head = sphere(0.34, skin, 10);
+  head.position.set(0, legH + 1.5, 0);
   g.add(head);
-  const face = buildFace(head, { w: 0.58, h: 0.58, z: -0.31 });
-  // hair: cap base + a long-back or top-bun variant for variety
+  const face = buildFace(head, { w: 0.5, h: 0.5, z: -0.33 });
+
+  // hair: smooth crown + a long-back or top-bun variant for variety
   const hairC = pick(HAIR);
-  g.add(box(0.66, 0.26, 0.64, hairC, 0, legH + 1.78, 0));
+  const crown = sphere(0.365, hairC, 10);
+  crown.scale.set(1.04, 0.78, 1.04);
+  crown.position.set(0, legH + 1.63, 0.05);
+  g.add(crown);
   const wearsHat = hat && Math.random() < 0.55;
   const hairStyle = Math.random();
-  if (hairStyle < 0.25) g.add(box(0.6, 0.6, 0.16, hairC, 0, legH + 1.5, 0.36));        // long hair down the back
-  else if (hairStyle < 0.37 && !wearsHat) { const bun = sphere(0.16, hairC, 6); bun.position.set(0, legH + 1.97, 0.12); g.add(bun); }
+  if (hairStyle < 0.25) {
+    const back = sphere(0.3, hairC, 8);
+    back.scale.set(1, 1.35, 0.6);
+    back.position.set(0, legH + 1.42, 0.27);
+    g.add(back);
+  } else if (hairStyle < 0.37 && !wearsHat) {
+    const bun = sphere(0.15, hairC, 7);
+    bun.position.set(0, legH + 1.9, 0.1);
+    g.add(bun);
+  }
   // optional headwear (sun hat or baseball cap) for beachy variety
   if (wearsHat) {
     const style = hat === true ? (Math.random() < 0.5 ? 'sun' : 'cap') : hat;
     const hc = pick(HATS);
     if (style === 'sun') {
-      const brim = cyl(0.56, 0.56, 0.07, hc, 12); brim.position.set(0, legH + 1.88, 0); g.add(brim);
-      const dome = cyl(0.34, 0.4, 0.24, hc, 10); dome.position.set(0, legH + 2.0, 0); g.add(dome);
+      const brim = cyl(0.58, 0.62, 0.06, hc, 14); brim.position.set(0, legH + 1.74, 0); g.add(brim);
+      const dome = sphere(0.33, hc, 9); dome.scale.set(1.1, 0.65, 1.1); dome.position.set(0, legH + 1.8, 0); g.add(dome);
     } else {
-      g.add(box(0.6, 0.2, 0.58, hc, 0, legH + 1.94, 0));        // crown
-      g.add(box(0.5, 0.07, 0.34, hc, 0, legH + 1.88, -0.45));   // peak (front is -Z)
+      const capDome = sphere(0.36, hc, 9); capDome.scale.set(1.03, 0.66, 1.03); capDome.position.set(0, legH + 1.7, 0.02); g.add(capDome);
+      const peak = sphere(0.24, hc, 8); peak.scale.set(1.3, 0.14, 1.5); peak.position.set(0, legH + 1.72, -0.42); g.add(peak);
     }
   }
   // panic: shocked face + both arms thrown up
   g.userData.arms = arms;
+  g.userData.legs = legs;
   g.userData.setShocked = (on) => {
     face.setShocked(on);
     for (const a of arms) {
       if (on) a.rotation.set((Math.random() - 0.5) * 0.5, 0, a.userData.side * (2.3 + Math.random() * 0.45));
-      else a.rotation.set(0, 0, 0.06 * a.userData.side);
+      else a.rotation.set(0, 0, 0.08 * a.userData.side);
     }
   };
 
@@ -467,6 +578,9 @@ export function buildBiker() {
   // (the person's own setShocked resets arms to hanging-at-sides)
   const reachBars = () => { for (const a of rider.userData.arms) a.rotation.set(0.95, 0, 0.12 * a.userData.side); };
   reachBars();
+  // legs bent onto the pedals (one up, one down)
+  rider.userData.legs[0].rotation.x = -0.9;
+  rider.userData.legs[1].rotation.x = -0.45;
   const riderShock = rider.userData.setShocked;
   g.userData.setShocked = (on) => { riderShock(on); if (!on) reachBars(); };
 
@@ -505,15 +619,24 @@ function blanketMat(c1, c2) {
   return m;
 }
 
-// A cross-legged sitter for the picnic blanket (compact: 4 meshes + face).
+// A cross-legged sitter for the picnic blanket (compact, smooth-shaded).
 function buildSitter(shirt = pick(SHIRTS), skin = pick(SKIN)) {
   const g = new THREE.Group();
-  g.add(box(0.9, 0.3, 0.7, 0x394a59, 0, 0.16, -0.12)); // folded legs
-  g.add(box(0.7, 0.75, 0.42, shirt, 0, 0.66, 0.08));   // torso
-  const head = box(0.48, 0.46, 0.44, skin, 0, 1.26, 0.08);
+  const folded = sphere(0.42, 0x394a59, 8);              // folded legs
+  folded.scale.set(1.25, 0.5, 1.0);
+  folded.position.set(0, 0.2, -0.1);
+  g.add(folded);
+  const torso = capsule(0.3, 0.34, clothMat(shirt, pick(CLOTH_PATTERNS)), 0, 0.66, 0.06, 10);
+  torso.scale.set(1.1, 1, 0.7);
+  g.add(torso);
+  const head = sphere(0.26, skin, 10);
+  head.position.set(0, 1.24, 0.06);
   g.add(head);
-  g.add(box(0.52, 0.18, 0.48, pick(HAIR), 0, 1.48, 0.1));
-  const face = buildFace(head, { w: 0.44, h: 0.42, z: -0.23 });
+  const crown = sphere(0.28, pick(HAIR), 9);
+  crown.scale.set(1.04, 0.76, 1.04);
+  crown.position.set(0, 1.34, 0.1);
+  g.add(crown);
+  const face = buildFace(head, { w: 0.4, h: 0.4, z: -0.25 });
   g.userData.face = face;
   return g;
 }
@@ -581,10 +704,10 @@ export function buildCar() {
   wheelRim.position.set(0.42, 1.5, 0.45);
   wheelRim.rotation.x = -0.5;
   g.add(wheelRim);
-  // wheels with hubcaps
+  // wheels with hubcaps, tucked under rounded fenders
   const wheels = [];
-  const wheelGeo = new THREE.CylinderGeometry(0.45, 0.45, 0.35, 10);
-  const hubGeo = new THREE.CylinderGeometry(0.2, 0.2, 0.37, 8);
+  const wheelGeo = new THREE.CylinderGeometry(0.45, 0.45, 0.35, 14);
+  const hubGeo = new THREE.CylinderGeometry(0.2, 0.2, 0.37, 10);
   for (const sx of [-1, 1]) {
     for (const sz of [-1.3, 1.3]) {
       const w = new THREE.Mesh(wheelGeo, mat(0x1a1a1a));
@@ -595,6 +718,10 @@ export function buildCar() {
       w.add(hub);
       g.add(w);
       wheels.push(w);
+      const fender = sphere(0.55, color, 10);
+      fender.scale.set(0.55, 0.6, 1.1);
+      fender.position.set(1.0 * sx, 0.72, sz);
+      g.add(fender);
     }
   }
   // headlights + bumpers
@@ -816,34 +943,53 @@ const WED_PANTS = [0x394a59, 0x2a2a3a, 0x5a4a6a, 0x6a3a3a, 0x335a45];
 export function buildSeatedGuest({ shirt = pick(SHIRTS), skin = pick(SKIN), pants = pick(WED_PANTS), chair = 0xe8e0d2 } = {}) {
   const g = new THREE.Group();
   const seatY = 0.55;
+  const cloth = clothMat(shirt, pick(CLOTH_PATTERNS));
+  const pantsM = clothMat(pants, 'solid');
   g.add(box(0.64, 0.1, 0.58, chair, 0, seatY, 0));            // seat
   g.add(box(0.64, 0.6, 0.1, chair, 0, seatY + 0.35, 0.26));   // backrest
   g.add(box(0.6, seatY, 0.1, chair, 0, seatY / 2, 0.24));     // back legs
   g.add(box(0.6, seatY, 0.1, chair, 0, seatY / 2, -0.24));    // front legs
-  g.add(box(0.54, 0.22, 0.44, pants, 0, seatY + 0.16, -0.1)); // thighs
-  g.add(box(0.44, 0.5, 0.22, pants, 0, seatY - 0.15, -0.32)); // shins
-  g.add(box(0.72, 0.78, 0.44, shirt, 0, seatY + 0.62, 0.04)); // torso
+  for (const sx of [-1, 1]) {
+    const thigh = capsule(0.15, 0.26, pantsM, 0.16 * sx, seatY + 0.16, -0.1);
+    thigh.rotation.x = Math.PI / 2;   // horizontal, knees forward
+    g.add(thigh);
+    g.add(capsule(0.12, 0.28, pantsM, 0.16 * sx, seatY - 0.14, -0.34)); // shin
+    const foot = sphere(0.13, 0x3a2f2a, 7);
+    foot.scale.set(1, 0.55, 1.5);
+    foot.position.set(0.16 * sx, seatY - 0.42, -0.4);
+    g.add(foot);
+  }
+  const torso = capsule(0.34, 0.36, cloth, 0, seatY + 0.6, 0.04, 10); // torso
+  torso.scale.set(1.1, 1, 0.68);
+  g.add(torso);
   // arms hinged at the shoulder, resting toward the lap — they fly up in panic
   const arms = [];
   for (const sx of [-1, 1]) {
     const shoulder = new THREE.Group();
-    shoulder.position.set(0.46 * sx, seatY + 0.94, 0.04);
-    shoulder.add(box(0.2, 0.55, 0.22, shirt, 0, -0.26, 0));
-    shoulder.add(box(0.18, 0.18, 0.2, skin, 0, -0.6, 0)); // hand
+    shoulder.position.set(0.44 * sx, seatY + 0.94, 0.04);
+    shoulder.add(capsule(0.11, 0.32, cloth, 0, -0.26, 0));
+    const hand = sphere(0.11, skin, 7);
+    hand.position.set(0, -0.56, -0.02);
+    shoulder.add(hand);
     shoulder.rotation.x = 0.4;
     shoulder.userData.side = sx;
     g.add(shoulder);
     arms.push(shoulder);
   }
-  const head = box(0.5, 0.48, 0.46, skin, 0, seatY + 1.2, 0.04); // head
+  g.add(capsule(0.1, 0.1, skin, 0, seatY + 1.0, 0.04));
+  const head = sphere(0.27, skin, 10);
+  head.position.set(0, seatY + 1.2, 0.04);
   g.add(head);
-  const face = buildFace(head, { w: 0.46, h: 0.44, z: -0.24 });
-  g.add(box(0.54, 0.2, 0.5, pick(HAIR), 0, seatY + 1.42, 0.06)); // hair
+  const face = buildFace(head, { w: 0.4, h: 0.4, z: -0.26 });
+  const crown = sphere(0.29, pick(HAIR), 9);
+  crown.scale.set(1.04, 0.76, 1.04);
+  crown.position.set(0, seatY + 1.31, 0.08);
+  g.add(crown);
   // some guests dress up with a pastel occasion hat
   if (Math.random() < 0.3) {
     const hc = pick([0xffd1dc, 0xfff3d6, 0xd9c8f0, 0xc8e8d9, 0xf7f7fb]);
-    const brim = cyl(0.45, 0.45, 0.06, hc, 12); brim.position.set(0, seatY + 1.5, 0.06); g.add(brim);
-    const dome = cyl(0.26, 0.3, 0.2, hc, 10); dome.position.set(0, seatY + 1.6, 0.06); g.add(dome);
+    const brim = cyl(0.42, 0.46, 0.05, hc, 14); brim.position.set(0, seatY + 1.4, 0.06); g.add(brim);
+    const dome = sphere(0.26, hc, 9); dome.scale.set(1.1, 0.62, 1.1); dome.position.set(0, seatY + 1.44, 0.06); g.add(dome);
   }
   g.userData.arms = arms;
   g.userData.setShocked = (on) => {
