@@ -348,7 +348,7 @@ console.log('LEADERBOARD TEST:', JSON.stringify(lb));
 if (!lb.optimistic || !lb.optimistic.includes('TESTGULL')) {
   throw new Error('leaderboard did not reflect locally on submit: ' + JSON.stringify(lb));
 }
-if (!lb.me || !lb.me.includes('TESTGULL') || !lb.me.includes('4242')) {
+if (!lb.me || !lb.me.includes('TESTGULL') || !lb.me.includes('4,242')) {
   throw new Error('leaderboard submit/sync failed: ' + JSON.stringify(lb));
 }
 

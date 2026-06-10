@@ -59,20 +59,34 @@ export class Audio {
     this._loadSamples();
   }
 
-  // Fetch + decode every sample in the background. Each one that lands may
-  // immediately join the ambience if its level is already playing.
+  // Kick off the sample downloads immediately (no AudioContext needed), so
+  // they arrive while the player is still looking at the menu. Decoding waits
+  // for the first gesture (unlock), which creates the context.
+  preload() {
+    if (this._fetches) return;
+    this._fetches = {};
+    for (const [key, url] of Object.entries(SAMPLES)) {
+      this._fetches[key] = fetch(url)
+        .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.arrayBuffer(); })
+        .catch(() => null); // missing file → the synth fallback covers it
+    }
+  }
+
+  // Decode every prefetched sample. Each one that lands may immediately join
+  // the ambience if its level is already playing.
   _loadSamples() {
     if (this._loading) return;
     this._loading = true;
-    for (const [key, url] of Object.entries(SAMPLES)) {
-      fetch(url)
-        .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.arrayBuffer(); })
-        .then((ab) => new Promise((res, rej) => this.ctx.decodeAudioData(ab, res, rej)))
+    this.preload();
+    for (const key of Object.keys(SAMPLES)) {
+      this._fetches[key]
+        .then((ab) => ab && new Promise((res, rej) => this.ctx.decodeAudioData(ab, res, rej)))
         .then((buf) => {
+          if (!buf) return;
           this.buffers[key] = buf;
           if (this._ambLevel) this._refreshAmbience();
         })
-        .catch(() => {}); // missing file → the synth fallback covers it
+        .catch(() => {});
     }
   }
 

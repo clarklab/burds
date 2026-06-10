@@ -11,6 +11,9 @@ import { iconSvg } from './icons.js';
 // Icon name for each tier-3 weapon mode (badge + toast + picker).
 const MODE_ICON = { fire: 'fire', scatter: 'scatter', machinegun: 'machinegun' };
 
+// Scores render with comma grouping (1,000 / 467,286) everywhere.
+const fmtN = (n) => Math.round(n).toLocaleString('en-US');
+
 // Render a few flap frames of the actual seagull to transparent PNG sprites,
 // used for the two birds that orbit the menu logo. One-off, on a throwaway
 // renderer; returns [] (and the birds are simply skipped) if WebGL/readback
@@ -173,6 +176,7 @@ class Game {
     this.targets = new TargetManager(this.scene);
     this.effects = new Effects(this.scene);
     this.audio = new Audio();
+    this.audio.preload(); // fetch samples while the menu is up
     this.input = new Input(this.canvas, document.getElementById('poopBtn'));
 
     // flight state — the bird always runs forward (-Z); steering strafes it
@@ -234,7 +238,6 @@ class Game {
       hud: document.getElementById('hud'),
       menu: document.getElementById('menu'),
       gameover: document.getElementById('gameover'),
-      loading: document.getElementById('loading'),
       score: document.getElementById('scoreValue'),
       timer: document.getElementById('timerValue'),
       timerPill: document.getElementById('timerPill'),
@@ -270,7 +273,7 @@ class Game {
       nameInput: document.getElementById('nameInput'),
       submitScoreBtn: document.getElementById('submitScoreBtn'),
     };
-    this.dom.menuBest.textContent = this.best;
+    this.dom.menuBest.textContent = fmtN(this.best);
     this._initLevelPicker();
 
     // leaderboard state
@@ -285,7 +288,11 @@ class Game {
     this._resize();
     window.addEventListener('resize', () => this._resize());
 
-    this.dom.loading.classList.add('hidden');
+    // The menu doubles as the loading screen — everything above is built, so
+    // arm the PLAY button (it ships disabled as "LOADING…" in the HTML).
+    const playBtn = document.getElementById('playBtn');
+    playBtn.disabled = false;
+    playBtn.textContent = 'PLAY';
 
     this.clock = new THREE.Clock();
     this.renderer.setAnimationLoop(() => this._frame());
@@ -308,13 +315,15 @@ class Game {
   // Return from the game-over screen to the menu so a different level can be
   // picked. The last-played venue stays as the backdrop.
   _showMenu() {
+    // a new build installed mid-game? now that no round is live, hop onto it
+    if (window.__swReloadPending) { window.location.reload(); return; }
     this.state = 'menu';
     this.input.setEnabled(false);
     this._camLookAt = null;
     this.dom.gameover.classList.add('hidden');
     this.dom.hud.classList.add('hidden');
     this.dom.menu.classList.remove('hidden');
-    this.dom.menuBest.textContent = this.bests[this.levelId];
+    this.dom.menuBest.textContent = fmtN(this.bests[this.levelId]);
     this._renderMenuBoard();
   }
 
@@ -369,7 +378,7 @@ class Game {
     if (this.dom.levelPick) {
       for (const c of this.dom.levelPick.children) c.classList.toggle('selected', c.dataset.level === id);
     }
-    this.dom.menuBest.textContent = this.best;
+    this.dom.menuBest.textContent = fmtN(this.best);
     if (this.dom.menuBoardTitle) this.dom.menuBoardTitle.innerHTML = iconSvg('trophy', { size: 15, cls: 'title-ic' }) + `<span>${this.level.name} Top</span>`;
     this._renderHowTo();
     // swap the menu backdrop world to the chosen venue
@@ -462,7 +471,7 @@ class Game {
       if (e.me || (meId && e.id === meId)) li.className = 'me';
       const rank = document.createElement('span'); rank.className = 'rank'; rank.textContent = String(i + 1);
       const name = document.createElement('span'); name.className = 'pname'; name.textContent = e.name || 'BURD';
-      const score = document.createElement('span'); score.className = 'pscore'; score.textContent = String(e.score);
+      const score = document.createElement('span'); score.className = 'pscore'; score.textContent = fmtN(e.score);
       li.append(rank, name, score);
       listEl.appendChild(li);
     });
@@ -583,9 +592,9 @@ class Game {
     }
     this.best = this.bests[this.levelId];
     const newBest = this.score === this.best && this.score > 0;
-    this.dom.finalScore.textContent = this.score;
+    this.dom.finalScore.textContent = fmtN(this.score);
     this.dom.goHits.textContent = this.hits;
-    this.dom.goBest.textContent = this.best;
+    this.dom.goBest.textContent = fmtN(this.best);
     this.dom.goBullseyes.textContent = this.bullseyes;
     this.dom.goCombo.textContent = '\u00d7' + this.maxCombo;
     this.dom.goBlurb.textContent = this._blurb();
@@ -804,7 +813,7 @@ class Game {
       }
       this.maxCombo = Math.max(this.maxCombo, this.combo);
       this.score += gain;
-      this.dom.score.textContent = this.score;
+      this.dom.score.textContent = fmtN(this.score);
 
       if (bestAcc >= BULLSEYE_ACC) this.audio.bullseye();
       else if (bestAcc >= DIRECT_ACC) this.audio.splat(true);
@@ -817,7 +826,7 @@ class Game {
       this.dom.timerPill.classList.toggle('warn', this.timeLeft <= 5);
 
       const prefix = hits.length > 1 ? `×${hits.length} ` : '';
-      this._showToast(`${prefix}${bestTier} +${gain}`);
+      this._showToast(`${prefix}${bestTier} +${fmtN(gain)}`);
       this._showCombo();
 
       // bombing the rare golden super turd activates / stacks SUPER TURD MODE
