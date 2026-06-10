@@ -25,7 +25,7 @@ const SAMPLES = {
 };
 // Looping ambience layers per level id, with per-layer mix volume.
 const AMBIENCE = {
-  beach: [{ key: 'ambBeach', vol: 0.55 }],
+  beach: [{ key: 'ambBeach', vol: 0.28 }],
   wedding: [{ key: 'ambWedding', vol: 0.4 }, { key: 'ambMurmur', vol: 0.22 }],
   concert: [{ key: 'ambConcert', vol: 0.5 }],
 };

@@ -392,7 +392,10 @@ export function buildSeagull() {
 // ---------------------------------------------------------------------------
 // A standing person (adult). scale param lets us make kids. Arms are hinged at
 // the shoulder (userData.arms) so they can swing while walking, pump at a gig,
-// and fly up in panic when a turd bears down.
+// and fly up in panic when a turd bears down. The torso/arms/head hang from
+// a waist pivot (userData.upper) so panic can also fold the body — every
+// shock rolls a random pose: arms to the sky, hands clutching the face,
+// duck-and-cover, or a sideways flinch.
 //
 // Options:
 //   hat    — headwear by chance: true = random beach hat, 'cap'/'sun' = style
@@ -431,16 +434,22 @@ export function buildPerson({ scale = 1, shirt = pick(SHIRTS), skin = pick(SKIN)
     legs.push(hip);
   }
 
+  // everything above the waist hangs from this pivot so panic can fold the
+  // body (duck/flinch); add-on builders (suits, guitars…) attach here too
+  const upper = new THREE.Group();
+  upper.position.y = legH;
+  g.add(upper);
+
   // torso: a rounded capsule wearing the painted cloth
-  const torso = capsule(0.42, 0.42, cloth, 0, legH + 0.54, 0, 10);
+  const torso = capsule(0.42, 0.42, cloth, 0, 0.54, 0, 10);
   torso.scale.set(1.12, 1, 0.62);
-  g.add(torso);
+  upper.add(torso);
 
   // arms — shoulder pivots (userData.arms) with a baked elbow bend
   const arms = [];
   for (const sx of [-1, 1]) {
     const shoulder = new THREE.Group();
-    shoulder.position.set(0.6 * sx, legH + 1.02, 0);
+    shoulder.position.set(0.6 * sx, 1.02, 0);
     shoulder.add(capsule(0.135, 0.3, upperArmM, 0, -0.22, 0));
     const fore = capsule(0.11, 0.28, foreArmM, 0.02 * sx, -0.62, -0.05);
     fore.rotation.x = 0.22;
@@ -450,55 +459,76 @@ export function buildPerson({ scale = 1, shirt = pick(SHIRTS), skin = pick(SKIN)
     shoulder.add(hand);
     shoulder.rotation.z = 0.08 * sx;
     shoulder.userData.side = sx;
-    g.add(shoulder);
+    upper.add(shoulder);
     arms.push(shoulder);
   }
 
   // neck + smooth round head with the shared painted face
-  g.add(capsule(0.12, 0.12, skin, 0, legH + 1.14, 0));
+  upper.add(capsule(0.12, 0.12, skin, 0, 1.14, 0));
   const head = sphere(0.34, skin, 10);
-  head.position.set(0, legH + 1.5, 0);
-  g.add(head);
+  head.position.set(0, 1.5, 0);
+  upper.add(head);
   const face = buildFace(head, { w: 0.5, h: 0.5, z: -0.33 });
 
   // hair: smooth crown + a long-back or top-bun variant for variety
   const hairC = pick(HAIR);
   const crown = sphere(0.365, hairC, 10);
   crown.scale.set(1.04, 0.78, 1.04);
-  crown.position.set(0, legH + 1.63, 0.05);
-  g.add(crown);
+  crown.position.set(0, 1.63, 0.05);
+  upper.add(crown);
   const wearsHat = hat && Math.random() < 0.55;
   const hairStyle = Math.random();
   if (hairStyle < 0.25) {
     const back = sphere(0.3, hairC, 8);
     back.scale.set(1, 1.35, 0.6);
-    back.position.set(0, legH + 1.42, 0.27);
-    g.add(back);
+    back.position.set(0, 1.42, 0.27);
+    upper.add(back);
   } else if (hairStyle < 0.37 && !wearsHat) {
     const bun = sphere(0.15, hairC, 7);
-    bun.position.set(0, legH + 1.9, 0.1);
-    g.add(bun);
+    bun.position.set(0, 1.9, 0.1);
+    upper.add(bun);
   }
   // optional headwear (sun hat or baseball cap) for beachy variety
   if (wearsHat) {
     const style = hat === true ? (Math.random() < 0.5 ? 'sun' : 'cap') : hat;
     const hc = pick(HATS);
     if (style === 'sun') {
-      const brim = cyl(0.58, 0.62, 0.06, hc, 14); brim.position.set(0, legH + 1.74, 0); g.add(brim);
-      const dome = sphere(0.33, hc, 9); dome.scale.set(1.1, 0.65, 1.1); dome.position.set(0, legH + 1.8, 0); g.add(dome);
+      const brim = cyl(0.58, 0.62, 0.06, hc, 14); brim.position.set(0, 1.74, 0); upper.add(brim);
+      const dome = sphere(0.33, hc, 9); dome.scale.set(1.1, 0.65, 1.1); dome.position.set(0, 1.8, 0); upper.add(dome);
     } else {
-      const capDome = sphere(0.36, hc, 9); capDome.scale.set(1.03, 0.66, 1.03); capDome.position.set(0, legH + 1.7, 0.02); g.add(capDome);
-      const peak = sphere(0.24, hc, 8); peak.scale.set(1.3, 0.14, 1.5); peak.position.set(0, legH + 1.72, -0.42); g.add(peak);
+      const capDome = sphere(0.36, hc, 9); capDome.scale.set(1.03, 0.66, 1.03); capDome.position.set(0, 1.7, 0.02); upper.add(capDome);
+      const peak = sphere(0.24, hc, 8); peak.scale.set(1.3, 0.14, 1.5); peak.position.set(0, 1.72, -0.42); upper.add(peak);
     }
   }
-  // panic: shocked face + both arms thrown up
+  // panic: shocked face + a random full-body pose
   g.userData.arms = arms;
   g.userData.legs = legs;
+  g.userData.upper = upper;
   g.userData.setShocked = (on) => {
     face.setShocked(on);
-    for (const a of arms) {
-      if (on) a.rotation.set((Math.random() - 0.5) * 0.5, 0, a.userData.side * (2.3 + Math.random() * 0.45));
-      else a.rotation.set(0, 0, 0.08 * a.userData.side);
+    if (!on) {
+      for (const a of arms) a.rotation.set(0, 0, 0.08 * a.userData.side);
+      upper.rotation.set(0, 0, 0);
+      return;
+    }
+    const r = Math.random();
+    if (r < 0.32) {
+      // arms thrown to the sky
+      for (const a of arms) a.rotation.set((Math.random() - 0.5) * 0.5, 0, a.userData.side * (2.3 + Math.random() * 0.45));
+    } else if (r < 0.58) {
+      // hands fly to the face (arms cross inward past vertical so the hands
+      // land on the cheeks, head tipped slightly into them)
+      for (const a of arms) a.rotation.set(-0.75 - Math.random() * 0.2, 0, a.userData.side * 3.45);
+      upper.rotation.x = 0.14;
+    } else if (r < 0.82) {
+      // duck and cover: fold at the waist, arms wrapped over the head
+      upper.rotation.x = 0.55 + Math.random() * 0.25;
+      for (const a of arms) a.rotation.set(-1.1, 0, a.userData.side * 2.7);
+    } else {
+      // sideways flinch: one arm shields the face, the other flails skyward
+      arms[0].rotation.set(-0.9, 0, arms[0].userData.side * 2.5);
+      arms[1].rotation.set((Math.random() - 0.5) * 0.4, 0, arms[1].userData.side * (2.2 + Math.random() * 0.4));
+      upper.rotation.set(0.18, 0, (Math.random() < 0.5 ? -1 : 1) * 0.22);
     }
   };
 
@@ -994,9 +1024,20 @@ export function buildSeatedGuest({ shirt = pick(SHIRTS), skin = pick(SKIN), pant
   g.userData.arms = arms;
   g.userData.setShocked = (on) => {
     face.setShocked(on);
-    for (const a of arms) {
-      if (on) a.rotation.set((Math.random() - 0.5) * 0.4, 0, a.userData.side * (2.25 + Math.random() * 0.5));
-      else a.rotation.set(0.4, 0, 0);
+    if (!on) {
+      for (const a of arms) a.rotation.set(0.4, 0, 0);
+      return;
+    }
+    const r = Math.random();
+    if (r < 0.4) {
+      // arms thrown to the sky
+      for (const a of arms) a.rotation.set((Math.random() - 0.5) * 0.4, 0, a.userData.side * (2.25 + Math.random() * 0.5));
+    } else if (r < 0.72) {
+      // hands fly to the face
+      for (const a of arms) a.rotation.set(-0.7 - Math.random() * 0.2, 0, a.userData.side * 3.4);
+    } else {
+      // brace: arms clamp in front of the chest, hunkering down
+      for (const a of arms) a.rotation.set(-1.35 - Math.random() * 0.25, 0, a.userData.side * 0.5);
     }
   };
   g.userData.headHeight = seatY + 1.52;
@@ -1008,11 +1049,12 @@ export function buildSeatedGuest({ shirt = pick(SHIRTS), skin = pick(SKIN), pant
 export function buildGroom() {
   const suit = pick([0x2b2b3a, 0x1c1c28, 0x33333f]);
   const g = buildPerson({ scale: 1.0, shirt: suit, pants: suit, skin: pick(SKIN), tank: false, jitter: false });
-  g.add(box(0.34, 0.7, 0.12, 0xffffff, 0, 1.6, -0.26)); // shirt front
-  g.add(box(0.22, 0.1, 0.1, 0x111111, 0, 1.72, -0.32)); // bowtie
-  g.add(sphere(0.1, 0xff5d8f, 6).translateX(0.3).translateY(1.7).translateZ(-0.26)); // boutonniere
-  const brim = cyl(0.5, 0.5, 0.06, 0x16161c, 12); brim.position.set(0, 2.84, 0); g.add(brim);
-  const crown = cyl(0.34, 0.34, 0.42, 0x16161c, 10); crown.position.set(0, 3.06, 0); g.add(crown);
+  const up = g.userData.upper; // suit details fold with the body in a panic
+  up.add(box(0.34, 0.7, 0.12, 0xffffff, 0, 0.7, -0.26)); // shirt front
+  up.add(box(0.22, 0.1, 0.1, 0x111111, 0, 0.82, -0.32)); // bowtie
+  up.add(sphere(0.1, 0xff5d8f, 6).translateX(0.3).translateY(0.8).translateZ(-0.26)); // boutonniere
+  const brim = cyl(0.5, 0.5, 0.06, 0x16161c, 12); brim.position.set(0, 1.94, 0); up.add(brim);
+  const crown = cyl(0.34, 0.34, 0.42, 0x16161c, 10); crown.position.set(0, 2.16, 0); up.add(crown);
   freeze(g);
   return g;
 }
@@ -1022,13 +1064,14 @@ export function buildBride() {
   const white = 0xffffff;
   const g = buildPerson({ scale: 1.0, shirt: white, pants: white, skin: pick(SKIN), tank: false, jitter: false });
   const skirt = cone(0.85, 1.3, white, 12); skirt.position.y = 0.78; g.add(skirt);
+  const up = g.userData.upper;
   const veil = new THREE.Mesh(new THREE.PlaneGeometry(0.78, 1.2), mat(0xffffff, { transparent: true, opacity: 0.7, side: THREE.DoubleSide }));
-  veil.position.set(0, 2.05, 0.34); g.add(veil);
+  veil.position.set(0, 1.15, 0.34); up.add(veil);
   const tiara = new THREE.Mesh(new THREE.TorusGeometry(0.26, 0.045, 6, 12), mat(0xffd23f));
-  tiara.rotation.x = Math.PI / 2 - 0.15; tiara.position.set(0, 2.78, 0); g.add(tiara);
+  tiara.rotation.x = Math.PI / 2 - 0.15; tiara.position.set(0, 1.88, 0); up.add(tiara);
   for (let i = 0; i < 6; i++) {
-    g.add(sphere(0.11, pick([0xff8fab, 0xffd1dc, 0xffffff, 0xffe066]), 6)
-      .translateX(0.5 + (Math.random() - 0.5) * 0.3).translateY(1.3 + (Math.random() - 0.5) * 0.3).translateZ(-0.3));
+    up.add(sphere(0.11, pick([0xff8fab, 0xffd1dc, 0xffffff, 0xffe066]), 6)
+      .translateX(0.5 + (Math.random() - 0.5) * 0.3).translateY(0.4 + (Math.random() - 0.5) * 0.3).translateZ(-0.3));
   }
   g.userData.headHeight = 2.75;
   freeze(g);
@@ -1040,8 +1083,9 @@ export function buildPriest() {
   const robe = 0x1c1c22;
   const g = buildPerson({ scale: 1.0, shirt: robe, pants: robe, skin: pick(SKIN), tank: false, jitter: false });
   const cassock = cone(0.7, 1.4, robe, 10); cassock.position.y = 0.78; g.add(cassock);
-  g.add(box(0.4, 0.16, 0.12, 0xffffff, 0, 1.96, -0.27)); // collar
-  g.add(box(0.3, 0.4, 0.1, 0x7a2d2d, 0.42, 1.4, -0.3));  // book
+  const up = g.userData.upper;
+  up.add(box(0.4, 0.16, 0.12, 0xffffff, 0, 1.06, -0.27)); // collar
+  up.add(box(0.3, 0.4, 0.1, 0x7a2d2d, 0.42, 0.5, -0.3));  // book
   g.userData.headHeight = 2.75;
   freeze(g);
   return g;
@@ -1053,7 +1097,7 @@ export function buildBandMember(role = 'guitar') {
   const g = buildPerson({ scale: 1.0, shirt, pants: 0x14141a, skin: pick(SKIN), jitter: false });
   // stage presence: a bright mohawk on most of the band
   if (Math.random() < 0.6) {
-    g.add(box(0.14, 0.34, 0.62, pick([0xff2e4d, 0x35ff7a, 0x3bdcff, 0xffd23f]), 0, 2.55, 0));
+    g.userData.upper.add(box(0.14, 0.34, 0.62, pick([0xff2e4d, 0x35ff7a, 0x3bdcff, 0xffd23f]), 0, 1.65, 0));
   }
   if (role === 'drums') {
     const kit = new THREE.Group();
@@ -1074,13 +1118,14 @@ export function buildBandMember(role = 'guitar') {
     const baseShock = g.userData.setShocked;
     g.userData.setShocked = (on) => { baseShock(on); if (!on) strike(); };
   } else {
-    const body = box(0.5, 0.74, 0.16, role === 'bass' ? 0x202024 : 0xcc3322, 0.32, 1.2, -0.32);
-    body.rotation.z = 0.5; g.add(body);
-    const neck = box(0.12, 1.2, 0.1, 0x6b4a2a, -0.22, 1.5, -0.32);
-    neck.rotation.z = 0.5; g.add(neck);
+    const up = g.userData.upper;
+    const body = box(0.5, 0.74, 0.16, role === 'bass' ? 0x202024 : 0xcc3322, 0.32, 0.3, -0.32);
+    body.rotation.z = 0.5; up.add(body);
+    const neck = box(0.12, 1.2, 0.1, 0x6b4a2a, -0.22, 0.6, -0.32);
+    neck.rotation.z = 0.5; up.add(neck);
     // strap across the chest
-    const strap = box(0.16, 1.1, 0.06, 0x3a2a1a, 0, 1.45, -0.3);
-    strap.rotation.z = -0.7; g.add(strap);
+    const strap = box(0.16, 1.1, 0.06, 0x3a2a1a, 0, 0.55, -0.3);
+    strap.rotation.z = -0.7; up.add(strap);
   }
   g.userData.headHeight = 2.75;
   freeze(g);
