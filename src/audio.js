@@ -12,6 +12,7 @@ const SAMPLES = {
   ambWedding: './audio/amb-wedding.mp3', // slow wedding processional
   ambMurmur: './audio/amb-murmur.mp3',   // light guest murmur (layered)
   ambConcert: './audio/amb-concert.mp3', // heavy metal riffing
+  rock: './audio/rock.m4a',              // the concert's full rock track (music loop)
   gull1: './audio/gull1.mp3',
   gull2: './audio/gull2.mp3',
   react1: './audio/react1.mp3',          // "oh no!"
@@ -27,7 +28,7 @@ const SAMPLES = {
 const AMBIENCE = {
   beach: [{ key: 'ambBeach', vol: 0.28 }],
   wedding: [{ key: 'ambWedding', vol: 0.4 }, { key: 'ambMurmur', vol: 0.22 }],
-  concert: [{ key: 'ambConcert', vol: 0.5 }],
+  concert: [{ key: 'rock', vol: 0.55 }], // the rock track loops as the concert music
 };
 const REACTS = ['react1', 'react2', 'react3', 'react4', 'react5', 'react6', 'react7', 'react8'];
 

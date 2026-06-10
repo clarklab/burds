@@ -122,7 +122,7 @@ out on the bay, clouds drifting overhead and hazy headlands on the horizon.
 - **WebAudio synth + sampled soundtrack** — moment-to-moment blips (charge,
   splat, bullseye) are synthesized at runtime, layered with recorded samples:
   per-level ambience (surf on the beach, a slow wedding march with guest
-  murmurs, heavy metal at the gig), "oh no!" / gasp / scream crowd reactions
+  murmurs, and a full **rock track looping** at the concert), "oh no!" / gasp / scream crowd reactions
   on every hit, and a real seagull cry on power-ups. Samples are royalty-free
   recordings from [Pixabay](https://pixabay.com/) (Pixabay Content License,
   no attribution required), mastered to small mono MP3s in `audio/` and
