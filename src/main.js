@@ -850,8 +850,11 @@ class Game {
       this.audio.superZap();
       this._showToast('SUPER TURD MODE!', 'bolt');
     } else {
-      // stack: more time, bigger turds, a louder celebration
-      this.superTimer += SUPER_STACK_TIME;
+      // stack: bigger turds and a higher points multiplier every time — but
+      // the clock only banks extra time through the 4th super turd. Beyond
+      // that the mode keeps scoring harder yet must eventually run out, so
+      // a hot streak can't snowball into permanent god mode.
+      if (this.superStack <= 4) this.superTimer += SUPER_STACK_TIME;
       this.audio.superStack();
       this.audio.seagullYell();
       this._showToast(`SUPER TURD ×${this.superStack}!`, 'bolt');

@@ -181,6 +181,17 @@ const sup = await page.evaluate(async () => {
   g.firePoop(1, { bt: true });
   out.poopIsFire = !!(g.poops[0] && g.poops[0].fire);
   out.timerWasAdded = out.timerAfterStack > t1;
+  // timer stack cap: the 4th super turd still banks time, the 5th+ must NOT
+  // (points multiplier keeps climbing, but the mode has to run out eventually)
+  const t4 = g.superTimer;
+  g._hitSuperTurd();                       // stack 4
+  out.stack4 = g.superStack;
+  out.stack4AddedTime = g.superTimer > t4;
+  const t5 = g.superTimer;
+  g._hitSuperTurd();                       // stack 5
+  g._hitSuperTurd();                       // stack 6
+  out.stack5PlusAddedTime = g.superTimer > t5; // should stay false
+  out.mult6 = g._superScoreMult();
   // scatter fires a whole grid of pellets at once (2/3/3/2 = 10)
   for (const pp of g.poops) g.scene.remove(pp.group); g.poops = [];
   g.weaponMode = 'scatter';
@@ -212,6 +223,9 @@ if (!(sup.weaponMode === 'fire' && sup.fireAura && sup.badgeFire && sup.poopIsFi
 }
 if (sup.scatterCount !== 10) {
   throw new Error('Scatter did not fire a 10-pellet grid volley: ' + JSON.stringify(sup));
+}
+if (!(sup.stack4 === 4 && sup.stack4AddedTime && !sup.stack5PlusAddedTime && sup.mult6 > sup.mult3)) {
+  throw new Error('Super timer did not cap after the 4th stack: ' + JSON.stringify(sup));
 }
 
 // --- charging finger can steer: hold the poop button and drag, and steerX
