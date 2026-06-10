@@ -53,11 +53,19 @@ await page.evaluate(async () => {
     game.scene.add(g);
     lineup.push(g);
   });
-  // a shocked pair to check the panic pose on the new bodies
-  const shocked = M.buildPerson({ hat: true, shoes: true });
-  shocked.position.set(2, 0, -16);
-  shocked.userData.setShocked(true);
-  game.scene.add(shocked);
+  // a row of shocked figures to check the random panic poses
+  for (let i = 0; i < 6; i++) {
+    const shocked = M.buildPerson({ hat: true, shoes: true });
+    shocked.position.set(-8 + i * 3.2, 0, -15.5);
+    shocked.rotation.y = Math.PI; // face the camera
+    shocked.userData.setShocked(true);
+    game.scene.add(shocked);
+  }
+  const sg = M.buildSeatedGuest();
+  sg.position.set(11, 0, -15.5);
+  sg.rotation.y = Math.PI;
+  sg.userData.setShocked(true);
+  game.scene.add(sg);
   // park the gull in shot too
   game.pos.set(-6, 2.2, -14.5);
   game.yaw = 0.4; game.pitch = 0; game.roll = 0;
