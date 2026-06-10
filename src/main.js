@@ -122,6 +122,20 @@ class Game {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // Filmic color grading — soft highlight rolloff and richer mids, the
+    // single biggest "console game" lighting upgrade. Scene lights are tuned
+    // ~25% hotter to balance the ACES curve.
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.02;
+
+    // Mobile robustness: if the GPU context dies (tab reclaimed in the
+    // background, driver hiccup) reload onto a fresh context rather than
+    // freezing on a dead canvas. And watch real frame times — a phone that
+    // can't hold the frame rate gets its render resolution stepped down
+    // (never back up, so no flicker) until it runs smooth. Game logic is
+    // dt-based, so nothing about the play changes.
+    this.canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); location.reload(); });
+    this._perf = { acc: 0, n: 0, ratio: Math.min(window.devicePixelRatio, 2) };
 
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(62, 1, 0.1, 800);
@@ -934,6 +948,20 @@ class Game {
   // ---------------------------------------------------------------
   _frame() {
     const dtReal = Math.min(this.clock.getDelta(), 0.05);
+
+    // adaptive resolution: average the frame time over ~2s windows and step
+    // the pixel ratio down 15% whenever the device can't hold ~38fps
+    const perf = this._perf;
+    perf.acc += dtReal; perf.n++;
+    if (perf.n >= 120) {
+      const avg = perf.acc / perf.n;
+      perf.acc = 0; perf.n = 0;
+      if (avg > 0.026 && perf.ratio > 1.01) {
+        perf.ratio = Math.max(1, perf.ratio * 0.85);
+        this.renderer.setPixelRatio(perf.ratio);
+        this._resize();
+      }
+    }
 
     // smooth time-scale toward target
     this.timeScale += (this.targetTimeScale - this.timeScale) * Math.min(1, dtReal * 16);

@@ -1,41 +1,143 @@
 import * as THREE from 'three';
 
 // ---------------------------------------------------------------------------
-// Low-poly procedural model builders. Everything is built from primitives with
-// flat shading so it gets that faceted, papercraft look without any external
-// asset files (no FBX/OBJ to download or break).
+// Procedural model builders, PS2-era style: smooth-shaded rounded bodies
+// (capsules, lathes, spheres) wearing canvas-painted textures, gouraud-lit.
+// Still zero external asset files — every texture is drawn to a canvas at
+// runtime, so the game stays a fully-offline, no-build PWA.
 // ---------------------------------------------------------------------------
 
 const mats = new Map();
-// Cached flat-shaded materials keyed by color so we don't make thousands.
+// Cached smooth-shaded materials keyed by color. (Polyhedron primitives like
+// the rocks' dodecahedrons are non-indexed, so they keep their faceted look
+// automatically; spheres/capsules/cylinders now shade smooth.)
 export function mat(color, opts = {}) {
   const key = color + JSON.stringify(opts);
   if (mats.has(key)) return mats.get(key);
-  const m = new THREE.MeshLambertMaterial({ color, flatShading: true, ...opts });
+  const m = new THREE.MeshLambertMaterial({ color, ...opts });
   mats.set(key, m);
   return m;
 }
 
+// Draw a texture to an offscreen canvas. The workhorse behind every "painted"
+// surface in the game — cloth, wood, water sparkle, glows.
+export function makeCanvasTexture(size, draw, opts = {}) {
+  const c = document.createElement('canvas');
+  c.width = opts.w || size;
+  c.height = opts.h || size;
+  const ctx = c.getContext('2d');
+  draw(ctx, c.width, c.height);
+  const t = new THREE.CanvasTexture(c);
+  t.anisotropy = 4;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  if (opts.repeat) t.repeat.set(opts.repeat[0], opts.repeat[1]);
+  return t;
+}
+
+const hex = (c) => '#' + c.toString(16).padStart(6, '0');
+// Lighten/darken a hex color by k (-1..1) for painted shading.
+function shade(c, k) {
+  const r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255;
+  const f = (v) => Math.max(0, Math.min(255, Math.round(k < 0 ? v * (1 + k) : v + (255 - v) * k)));
+  return (f(r) << 16) | (f(g) << 8) | f(b);
+}
+
+// Cached cloth materials: a base color with a painted pattern (solid weave,
+// hoops, dots) plus a baked vertical shade gradient — the PS2 "textured
+// gouraud" look. Bounded key space, shared across the whole crowd.
+const cloths = new Map();
+function clothMat(color, pattern = 'solid') {
+  const key = color + ':' + pattern;
+  if (cloths.has(key)) return cloths.get(key);
+  const tex = makeCanvasTexture(64, (ctx, w, h) => {
+    ctx.fillStyle = hex(color);
+    ctx.fillRect(0, 0, w, h);
+    // soft weave noise
+    ctx.fillStyle = hex(shade(color, 0.12));
+    for (let i = 0; i < 90; i++) ctx.fillRect((Math.random() * w) | 0, (Math.random() * h) | 0, 2, 1);
+    ctx.fillStyle = hex(shade(color, -0.12));
+    for (let i = 0; i < 90; i++) ctx.fillRect((Math.random() * w) | 0, (Math.random() * h) | 0, 2, 1);
+    if (pattern === 'hoops') {
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      for (let y = 4; y < h; y += 16) ctx.fillRect(0, y, w, 6);
+    } else if (pattern === 'dots') {
+      ctx.fillStyle = 'rgba(255,255,255,0.8)';
+      for (let y = 6; y < h; y += 14) for (let x = ((y / 14) | 0) % 2 ? 4 : 11; x < w; x += 14) {
+        ctx.beginPath(); ctx.arc(x, y, 2.6, 0, 7); ctx.fill();
+      }
+    }
+    // baked top-light / bottom-shade gradient (fake AO)
+    const gr = ctx.createLinearGradient(0, 0, 0, h);
+    gr.addColorStop(0, 'rgba(255,255,255,0.16)');
+    gr.addColorStop(0.55, 'rgba(0,0,0,0)');
+    gr.addColorStop(1, 'rgba(0,0,0,0.22)');
+    ctx.fillStyle = gr;
+    ctx.fillRect(0, 0, w, h);
+  });
+  const m = new THREE.MeshLambertMaterial({ map: tex });
+  cloths.set(key, m);
+  return m;
+}
+const CLOTH_PATTERNS = ['solid', 'solid', 'hoops', 'dots'];
+
+// Cached primitive geometries. The crowds stamp out hundreds of identically
+// sized parts (126 fans share one torso geometry, etc.), so sharing the
+// buffers is a big GPU-memory and upload win on phones. Keys quantize to 3
+// decimals; never mutate a geometry returned from these helpers.
+const geos = new Map();
+function geo(kind, ...args) {
+  const key = kind + ':' + args.map((a) => (+a).toFixed(3)).join(',');
+  if (!geos.has(key)) {
+    const G = { box: THREE.BoxGeometry, cyl: THREE.CylinderGeometry, sphere: THREE.SphereGeometry, cone: THREE.ConeGeometry, capsule: THREE.CapsuleGeometry }[kind];
+    geos.set(key, new G(...args));
+  }
+  return geos.get(key);
+}
+
+// Freeze every static mesh in a subtree: stop per-frame local-matrix composes
+// for parts that never move relative to their parent (groups stay dynamic, so
+// rigs — arm pivots, wheels via `skip` — keep animating). With ~1500 crowd
+// meshes in a venue this trims real per-frame CPU on phones. Call it LAST in
+// a builder, after every mesh transform is final.
+function freeze(root, skip = null) {
+  root.traverse((o) => {
+    if (o.isMesh && (!skip || !skip.includes(o))) { o.matrixAutoUpdate = false; o.updateMatrix(); }
+  });
+  return root;
+}
+
 function box(w, h, d, color, x = 0, y = 0, z = 0) {
-  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat(color));
+  const m = new THREE.Mesh(geo('box', w, h, d), mat(color));
   m.position.set(x, y, z);
   m.castShadow = true;
   m.receiveShadow = true;
   return m;
 }
 function cyl(rt, rb, h, color, seg = 8) {
-  const m = new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, seg), mat(color));
+  const m = new THREE.Mesh(geo('cyl', rt, rb, h, seg), mat(color));
   m.castShadow = true;
   return m;
 }
 function sphere(r, color, seg = 8) {
-  const m = new THREE.Mesh(new THREE.SphereGeometry(r, seg, seg), mat(color));
+  const m = new THREE.Mesh(geo('sphere', r, seg, seg), mat(color));
   m.castShadow = true;
   return m;
 }
 function cone(r, h, color, seg = 8) {
-  const m = new THREE.Mesh(new THREE.ConeGeometry(r, h, seg), mat(color));
+  const m = new THREE.Mesh(geo('cone', r, h, seg), mat(color));
   m.castShadow = true;
+  return m;
+}
+// A rounded capsule limb/body segment — `len` is the straight middle section;
+// total height = len + 2r. `material` may be a color or a Material (cloth).
+function capsule(r, len, material, x = 0, y = 0, z = 0, radial = 8) {
+  const m = new THREE.Mesh(
+    geo('capsule', r, len, 3, radial),
+    material && material.isMaterial ? material : mat(material),
+  );
+  m.position.set(x, y, z);
+  m.castShadow = true;
+  m.receiveShadow = true;
   return m;
 }
 
@@ -56,6 +158,8 @@ function poly(points, color) {
 
 const SKIN = [0xf2c9a0, 0xe0a878, 0xc68642, 0x8d5524, 0xffdbac];
 const SHIRTS = [0xff6b6b, 0x4ecdc4, 0xffe66d, 0x6a8eff, 0xa06bff, 0xff9f1c, 0x2ec4b6, 0xff5d8f];
+const HAIR = [0x2a1a0a, 0x4a3120, 0x1a1a1a, 0x6b4a2a, 0xc4a35a, 0x8a8a8a];
+const HATS = [0xfff3d6, 0xff6b6b, 0x4ecdc4, 0xffe66d, 0xf7f7fb, 0x6a8eff, 0xff9f1c];
 const pick = (a) => a[(Math.random() * a.length) | 0];
 
 // ---------------------------------------------------------------------------
@@ -159,34 +263,46 @@ export function buildSeagull() {
   const g = new THREE.Group();
 
   const bodyColor = 0xf7f7fb;   // clean gull white
+  const mantle = 0xc9ced6;      // pale gray saddle across the back (real gulls!)
   const tipColor = 0x2b2b30;    // near-black wingtips
   const beakColor = 0xffa322;   // orange beak/feet
 
-  // Body: a faceted low-poly torpedo (sleek, not a fat oval). Faceted via flat
-  // shading on a 0-subdivision icosahedron.
-  const body = new THREE.Mesh(new THREE.IcosahedronGeometry(0.95, 0), mat(bodyColor));
-  body.scale.set(0.7, 0.74, 1.8);
+  // Body: a smooth lathe-turned torpedo with a full chest tapering to the
+  // tail — an actual gull silhouette, gouraud-shaded.
+  const profile = [
+    [0.02, -1.65], [0.2, -1.25], [0.4, -0.62], [0.58, 0.0],
+    [0.66, 0.52], [0.63, 0.95], [0.46, 1.25], [0.2, 1.45], [0.02, 1.52],
+  ].map(([x, y]) => new THREE.Vector2(x, y));
+  const body = new THREE.Mesh(new THREE.LatheGeometry(profile, 14), mat(bodyColor));
+  body.rotation.x = -Math.PI / 2;     // lathe axis (+Y) becomes forward (-Z)
+  body.scale.set(0.95, 1, 0.96);
+  body.position.y = 0.05;
   body.castShadow = true;
   g.add(body);
 
-  // Fuller breast up front so the chest reads round, tapering to a slim tail.
-  const breast = new THREE.Mesh(new THREE.IcosahedronGeometry(0.62, 0), mat(bodyColor));
-  breast.scale.set(0.82, 0.82, 1.05);
-  breast.position.set(0, -0.08, -0.75);
-  breast.castShadow = true;
-  g.add(breast);
+  // Gray mantle laid over the back so the bird reads "seagull", not "dove".
+  const saddle = sphere(0.62, mantle, 10);
+  saddle.scale.set(0.78, 0.5, 1.85);
+  saddle.position.set(0, 0.34, 0.12);
+  g.add(saddle);
 
-  // Small rounded head set forward and slightly raised.
-  const head = new THREE.Mesh(new THREE.IcosahedronGeometry(0.42, 0), mat(bodyColor));
-  head.position.set(0, 0.5, -1.42);
-  head.castShadow = true;
+  // Neck flowing up from the chest to a smooth round head set forward.
+  const neck = capsule(0.24, 0.3, bodyColor, 0, 0.22, -1.1, 10);
+  neck.rotation.x = 0.55;
+  g.add(neck);
+  const head = sphere(0.38, bodyColor, 12);
+  head.scale.set(0.92, 0.95, 1.1);
+  head.position.set(0, 0.5, -1.45);
   g.add(head);
 
-  // Short orange beak pointing forward (-Z).
+  // Short orange beak pointing forward (-Z), with the herring gull's red spot.
   const beak = cone(0.15, 0.52, beakColor, 5);
   beak.rotation.x = -Math.PI / 2;
   beak.position.set(0, 0.46, -1.92);
   g.add(beak);
+  const spot = sphere(0.045, 0xd62828, 5);
+  spot.position.set(0, 0.38, -1.98);
+  g.add(spot);
 
   // Eyes.
   for (const sx of [-1, 1]) {
@@ -195,9 +311,12 @@ export function buildSeagull() {
     g.add(eye);
   }
 
-  // Pointed delta tail (white) with a dark tip, drooping slightly.
-  g.add(poly([[-0.34, 0.12, 1.4], [0.34, 0.12, 1.4], [0, 0.0, 2.55]], bodyColor));
-  g.add(poly([[-0.17, 0.05, 2.0], [0.17, 0.05, 2.0], [0, 0.0, 2.6]], tipColor));
+  // Pointed delta tail (white) with a dark tip, drooping slightly. Grouped so
+  // it can flutter gently with the wingbeat.
+  const tail = new THREE.Group();
+  tail.add(poly([[-0.34, 0.12, 1.4], [0.34, 0.12, 1.4], [0, 0.0, 2.55]], bodyColor));
+  tail.add(poly([[-0.17, 0.05, 2.0], [0.17, 0.05, 2.0], [0, 0.0, 2.6]], tipColor));
+  g.add(tail);
 
   // Tucked orange feet under the rear.
   for (const sx of [-1, 1]) {
@@ -221,6 +340,14 @@ export function buildSeagull() {
       [0.05 * sx, 0, 0.8],
     ], bodyColor);
     shoulder.add(inner);
+    // gray covert layer riding on top of the inner wing for feathered depth
+    const covert = poly([
+      [0.1 * sx, 0.02, -0.3],
+      [1.5 * sx, 0.02, -0.08],
+      [1.5 * sx, 0.02, 0.34],
+      [0.12 * sx, 0.02, 0.55],
+    ], mantle);
+    shoulder.add(covert);
 
     // elbow joint at the mid of the wing
     const elbow = new THREE.Group();
@@ -253,46 +380,154 @@ export function buildSeagull() {
       wing.shoulder.rotation.set(fore, 0, a * wing.side);
       wing.elbow.rotation.set(0, 0, e * wing.side);
     }
+    // tail flutters a touch out of phase with the downstroke
+    tail.rotation.x = Math.sin(w - 1.6) * 0.07 * intensity;
   }
 
   flap(0, 1);
+  freeze(g);   // groups (shoulders/elbows/tail) stay live; meshes are static
   return { group: g, flap, wings };
 }
 
 // ---------------------------------------------------------------------------
-// A standing person (adult). scale param lets us make kids.
+// A standing person (adult). scale param lets us make kids. Arms are hinged at
+// the shoulder (userData.arms) so they can swing while walking, pump at a gig,
+// and fly up in panic when a turd bears down.
+//
+// Options:
+//   hat    — headwear by chance: true = random beach hat, 'cap'/'sun' = style
+//   shoes  — add shoes + maybe swap pants for shorts (beach casual)
+//   tank   — allow a sleeveless top by chance (off for suits/gowns)
+//   jitter — per-person build variation (height/width); off for the biker,
+//            whose helmet is fitted to an exact head height
 // ---------------------------------------------------------------------------
-export function buildPerson({ scale = 1, shirt = pick(SHIRTS), skin = pick(SKIN), pants = 0x394a59 } = {}) {
+export function buildPerson({ scale = 1, shirt = pick(SHIRTS), skin = pick(SKIN), pants = 0x394a59, hat = false, shoes = false, tank = true, jitter = true } = {}) {
   const g = new THREE.Group();
   const legH = 0.9;
-  for (const sx of [-1, 1]) {
-    g.add(box(0.34, legH, 0.34, pants, 0.22 * sx, legH / 2, 0));
-  }
-  const torso = box(0.95, 1.05, 0.55, shirt, 0, legH + 0.52, 0);
-  g.add(torso);
-  // arms
-  for (const sx of [-1, 1]) {
-    const arm = box(0.26, 0.95, 0.28, shirt, 0.62 * sx, legH + 0.55, 0);
-    arm.rotation.z = 0.06 * sx;
-    g.add(arm);
-    g.add(box(0.24, 0.24, 0.26, skin, 0.66 * sx, legH + 0.08, 0)); // hand
-  }
-  const neck = box(0.26, 0.18, 0.26, skin, 0, legH + 1.12, 0);
-  g.add(neck);
-  const head = box(0.62, 0.62, 0.6, skin, 0, legH + 1.5, 0);
-  g.add(head);
-  g.userData.setShocked = buildFace(head, { w: 0.58, h: 0.58, z: -0.31 }).setShocked;
-  // hair cap
-  const hair = box(0.66, 0.26, 0.64, pick([0x2a1a0a, 0x4a3120, 0x1a1a1a, 0x6b4a2a, 0xc4a35a]), 0, legH + 1.78, 0);
-  g.add(hair);
+  const formal = tank === false;
+  const cloth = clothMat(shirt, formal ? 'solid' : pick(CLOTH_PATTERNS));
+  const pantsM = clothMat(pants, 'solid');
+  // sleeves: suits get full sleeves, beach tops are short-sleeved, and some
+  // casual tops are sleeveless tanks
+  const tankTop = !formal && Math.random() < 0.28;
+  const upperArmM = tankTop ? mat(skin) : cloth;
+  const foreArmM = formal ? cloth : mat(skin);
+  const shorts = shoes && Math.random() < 0.45;
 
-  g.scale.setScalar(scale);
-  g.userData.headHeight = (legH + 1.85) * scale;
+  // legs — hip-hinged groups (userData.legs) so they stride in the walk cycle
+  const legs = [];
+  const shoeC = pick([0xffffff, 0x2a2a30, 0xff6b6b, 0x6a8eff]);
+  for (const sx of [-1, 1]) {
+    const hip = new THREE.Group();
+    hip.position.set(0.22 * sx, legH + 0.05, 0);
+    hip.add(capsule(0.17, 0.32, pantsM, 0, -0.27, 0));                       // thigh (or shorts)
+    hip.add(capsule(0.135, 0.3, shorts ? skin : pantsM, 0, -0.64, 0.01));    // calf: bare if shorts
+    const foot = sphere(0.16, shoes ? shoeC : skin, 7);
+    foot.scale.set(1, 0.55, 1.55);
+    foot.position.set(0, -0.92, -0.08);
+    hip.add(foot);
+    hip.userData.side = sx;
+    g.add(hip);
+    legs.push(hip);
+  }
+
+  // torso: a rounded capsule wearing the painted cloth
+  const torso = capsule(0.42, 0.42, cloth, 0, legH + 0.54, 0, 10);
+  torso.scale.set(1.12, 1, 0.62);
+  g.add(torso);
+
+  // arms — shoulder pivots (userData.arms) with a baked elbow bend
+  const arms = [];
+  for (const sx of [-1, 1]) {
+    const shoulder = new THREE.Group();
+    shoulder.position.set(0.6 * sx, legH + 1.02, 0);
+    shoulder.add(capsule(0.135, 0.3, upperArmM, 0, -0.22, 0));
+    const fore = capsule(0.11, 0.28, foreArmM, 0.02 * sx, -0.62, -0.05);
+    fore.rotation.x = 0.22;
+    shoulder.add(fore);
+    const hand = sphere(0.13, skin, 7);
+    hand.position.set(0.03 * sx, -0.9, -0.12);
+    shoulder.add(hand);
+    shoulder.rotation.z = 0.08 * sx;
+    shoulder.userData.side = sx;
+    g.add(shoulder);
+    arms.push(shoulder);
+  }
+
+  // neck + smooth round head with the shared painted face
+  g.add(capsule(0.12, 0.12, skin, 0, legH + 1.14, 0));
+  const head = sphere(0.34, skin, 10);
+  head.position.set(0, legH + 1.5, 0);
+  g.add(head);
+  const face = buildFace(head, { w: 0.5, h: 0.5, z: -0.33 });
+
+  // hair: smooth crown + a long-back or top-bun variant for variety
+  const hairC = pick(HAIR);
+  const crown = sphere(0.365, hairC, 10);
+  crown.scale.set(1.04, 0.78, 1.04);
+  crown.position.set(0, legH + 1.63, 0.05);
+  g.add(crown);
+  const wearsHat = hat && Math.random() < 0.55;
+  const hairStyle = Math.random();
+  if (hairStyle < 0.25) {
+    const back = sphere(0.3, hairC, 8);
+    back.scale.set(1, 1.35, 0.6);
+    back.position.set(0, legH + 1.42, 0.27);
+    g.add(back);
+  } else if (hairStyle < 0.37 && !wearsHat) {
+    const bun = sphere(0.15, hairC, 7);
+    bun.position.set(0, legH + 1.9, 0.1);
+    g.add(bun);
+  }
+  // optional headwear (sun hat or baseball cap) for beachy variety
+  if (wearsHat) {
+    const style = hat === true ? (Math.random() < 0.5 ? 'sun' : 'cap') : hat;
+    const hc = pick(HATS);
+    if (style === 'sun') {
+      const brim = cyl(0.58, 0.62, 0.06, hc, 14); brim.position.set(0, legH + 1.74, 0); g.add(brim);
+      const dome = sphere(0.33, hc, 9); dome.scale.set(1.1, 0.65, 1.1); dome.position.set(0, legH + 1.8, 0); g.add(dome);
+    } else {
+      const capDome = sphere(0.36, hc, 9); capDome.scale.set(1.03, 0.66, 1.03); capDome.position.set(0, legH + 1.7, 0.02); g.add(capDome);
+      const peak = sphere(0.24, hc, 8); peak.scale.set(1.3, 0.14, 1.5); peak.position.set(0, legH + 1.72, -0.42); g.add(peak);
+    }
+  }
+  // panic: shocked face + both arms thrown up
+  g.userData.arms = arms;
+  g.userData.legs = legs;
+  g.userData.setShocked = (on) => {
+    face.setShocked(on);
+    for (const a of arms) {
+      if (on) a.rotation.set((Math.random() - 0.5) * 0.5, 0, a.userData.side * (2.3 + Math.random() * 0.45));
+      else a.rotation.set(0, 0, 0.08 * a.userData.side);
+    }
+  };
+
+  // per-person build: a touch taller/shorter, broader/slighter
+  const wj = jitter ? 0.9 + Math.random() * 0.2 : 1;
+  const hj = jitter ? 0.94 + Math.random() * 0.14 : 1;
+  g.scale.set(scale * wj, scale * hj, scale * wj);
+  g.userData.headHeight = (legH + 1.85) * scale * hj;
+  freeze(g);
   return g;
 }
 
 export function buildKid() {
-  const p = buildPerson({ scale: 0.62, shirt: pick(SHIRTS) });
+  const p = buildPerson({ scale: 0.62, shirt: pick(SHIRTS), hat: 'cap', shoes: true });
+  // some kids tow a balloon on a string
+  if (Math.random() < 0.4) {
+    const bg = new THREE.Group();
+    const str = cyl(0.02, 0.02, 1.7, 0xd8d8e0, 4);
+    str.position.y = 0.85;
+    bg.add(str);
+    const ball = sphere(0.36, pick([0xff4d6d, 0xffd23f, 0x4ecdc4, 0x6a8eff, 0xff9f1c]), 7);
+    ball.scale.y = 1.15;
+    ball.position.y = 1.9;
+    bg.add(ball);
+    bg.position.set(0.72, 0.95, 0.15); // tied at one hand
+    bg.rotation.z = -0.18;
+    p.add(bg);
+    freeze(bg);
+  }
   return p;
 }
 
@@ -302,30 +537,52 @@ export function buildKid() {
 export function buildBiker() {
   const g = new THREE.Group();
 
-  // bicycle
+  // bicycle — wheels are pivot groups (tire ring + spokes + hub) so they
+  // genuinely roll; the frame gets a fork, seatpost and pedals.
   const bike = new THREE.Group();
-  const wheelGeo = new THREE.TorusGeometry(0.5, 0.08, 6, 14);
-  const wheelMat = mat(0x222228);
+  const wheelGeo = new THREE.TorusGeometry(0.5, 0.07, 6, 14);
+  const wheels = [];
   for (const wz of [-0.75, 0.75]) {
-    const w = new THREE.Mesh(wheelGeo, wheelMat);
-    w.position.set(0, 0.5, wz);
-    w.castShadow = true;
-    bike.add(w);
+    const wheel = new THREE.Group();
+    wheel.position.set(0, 0.5, wz);
+    const tire = new THREE.Mesh(wheelGeo, mat(0x222228));
+    tire.rotation.y = Math.PI / 2; // ring upright in the rolling plane
+    tire.castShadow = true;
+    wheel.add(tire);
+    for (let s = 0; s < 3; s++) {
+      const spoke = box(0.03, 0.92, 0.03, 0xb8bcc4);
+      spoke.rotation.x = (s / 3) * Math.PI;
+      wheel.add(spoke);
+    }
+    wheel.add(sphere(0.07, 0x44444c, 5)); // hub
+    bike.add(wheel);
+    wheels.push(wheel);
   }
   // frame
   const frameColor = pick([0xff4d4d, 0x33cc66, 0x3399ff, 0xffcc00]);
   const bar1 = cyl(0.05, 0.05, 1.3, frameColor); bar1.rotation.z = Math.PI / 2; bar1.position.set(0, 0.85, 0); bike.add(bar1);
   const bar2 = cyl(0.05, 0.05, 0.9, frameColor); bar2.position.set(0, 0.65, 0.4); bar2.rotation.x = 0.5; bike.add(bar2);
+  const fork = cyl(0.04, 0.04, 0.66, frameColor); fork.position.set(0, 0.8, -0.72); fork.rotation.x = -0.18; bike.add(fork);
+  const post = cyl(0.04, 0.04, 0.4, 0x44444c); post.position.set(0, 0.88, 0.55); bike.add(post);
   const seat = box(0.3, 0.12, 0.18, 0x111111, 0, 1.0, 0.55); bike.add(seat);
   const handle = box(0.5, 0.1, 0.12, 0x111111, 0, 1.08, -0.7); bike.add(handle);
+  for (const sx of [-1, 1]) bike.add(box(0.1, 0.05, 0.2, 0x111111, 0.2 * sx, 0.5 + 0.1 * sx, 0.1)); // pedals
   g.add(bike);
 
-  // rider, leaned forward
-  const rider = buildPerson({ scale: 0.92, shirt: pick([0xff3b3b, 0x00b894, 0x0984e3, 0xfdcb6e]) });
+  // rider, leaned forward (no build jitter — the helmet is fitted to the head)
+  const rider = buildPerson({ scale: 0.92, shirt: pick([0xff3b3b, 0x00b894, 0x0984e3, 0xfdcb6e]), jitter: false });
   rider.position.set(0, 0.55, 0.1);
   rider.rotation.x = 0.45;
   g.add(rider);
-  g.userData.setShocked = rider.userData.setShocked; // expose the rider's face
+  // arms reach forward to the handlebars; restore that pose when a shock ends
+  // (the person's own setShocked resets arms to hanging-at-sides)
+  const reachBars = () => { for (const a of rider.userData.arms) a.rotation.set(0.95, 0, 0.12 * a.userData.side); };
+  reachBars();
+  // legs bent onto the pedals (one up, one down)
+  rider.userData.legs[0].rotation.x = -0.9;
+  rider.userData.legs[1].rotation.x = -0.45;
+  const riderShock = rider.userData.setShocked;
+  g.userData.setShocked = (on) => { riderShock(on); if (!on) reachBars(); };
 
   // helmet
   const helmet = box(0.66, 0.34, 0.62, pick(SHIRTS), 0, 2.55, -0.55);
@@ -333,27 +590,65 @@ export function buildBiker() {
   g.add(helmet);
 
   g.userData.headHeight = 2.6;
-  g.userData.wheels = bike.children.filter((c) => c.geometry === wheelGeo);
+  g.userData.wheels = wheels; // groups: rotation.x rolls tire + spokes together
+  freeze(g);
   return g;
 }
 
 // ---------------------------------------------------------------------------
-// Picnic: checkered blanket + basket + food.
+// Picnic: checkered blanket (one textured plane, not 36 tiles), basket, food,
+// and two seated picnickers who gasp when a turd bears down.
 // ---------------------------------------------------------------------------
+const blanketMats = new Map();
+function blanketMat(c1, c2) {
+  const key = c1 + ':' + c2;
+  if (blanketMats.has(key)) return blanketMats.get(key);
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 64;
+  const ctx = cv.getContext('2d');
+  const hx = (c) => '#' + c.toString(16).padStart(6, '0');
+  const ts = 64 / 6;
+  for (let i = 0; i < 6; i++) for (let j = 0; j < 6; j++) {
+    ctx.fillStyle = (i + j) % 2 === 0 ? hx(c1) : hx(c2);
+    ctx.fillRect(i * ts, j * ts, ts + 1, ts + 1);
+  }
+  const t = new THREE.CanvasTexture(cv);
+  t.magFilter = THREE.NearestFilter; // crisp checker edges
+  const m = new THREE.MeshLambertMaterial({ map: t });
+  blanketMats.set(key, m);
+  return m;
+}
+
+// A cross-legged sitter for the picnic blanket (compact, smooth-shaded).
+function buildSitter(shirt = pick(SHIRTS), skin = pick(SKIN)) {
+  const g = new THREE.Group();
+  const folded = sphere(0.42, 0x394a59, 8);              // folded legs
+  folded.scale.set(1.25, 0.5, 1.0);
+  folded.position.set(0, 0.2, -0.1);
+  g.add(folded);
+  const torso = capsule(0.3, 0.34, clothMat(shirt, pick(CLOTH_PATTERNS)), 0, 0.66, 0.06, 10);
+  torso.scale.set(1.1, 1, 0.7);
+  g.add(torso);
+  const head = sphere(0.26, skin, 10);
+  head.position.set(0, 1.24, 0.06);
+  g.add(head);
+  const crown = sphere(0.28, pick(HAIR), 9);
+  crown.scale.set(1.04, 0.76, 1.04);
+  crown.position.set(0, 1.34, 0.1);
+  g.add(crown);
+  const face = buildFace(head, { w: 0.4, h: 0.4, z: -0.25 });
+  g.userData.face = face;
+  return g;
+}
+
 export function buildPicnic() {
   const g = new THREE.Group();
-  const size = 3.4;
-  // checkered blanket built from tiles
-  const tiles = 6;
-  const ts = size / tiles;
-  for (let i = 0; i < tiles; i++) {
-    for (let j = 0; j < tiles; j++) {
-      const c = (i + j) % 2 === 0 ? 0xff5b5b : 0xfff0f0;
-      const t = box(ts, 0.06, ts, c, (i - tiles / 2 + 0.5) * ts, 0.03, (j - tiles / 2 + 0.5) * ts);
-      t.receiveShadow = true;
-      g.add(t);
-    }
-  }
+  const [c1, c2] = pick([[0xff5b5b, 0xfff0f0], [0x3a6ea5, 0xeaf2ff], [0x2ec4b6, 0xf0fffa]]);
+  const blanket = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 3.4), blanketMat(c1, c2));
+  blanket.rotation.x = -Math.PI / 2;
+  blanket.position.y = 0.04;
+  blanket.receiveShadow = true;
+  g.add(blanket);
   // basket
   const basket = cyl(0.5, 0.42, 0.5, 0x9c6b3f, 10);
   basket.position.set(-0.7, 0.28, -0.6);
@@ -365,40 +660,77 @@ export function buildPicnic() {
   g.add(sphere(0.12, 0xff4d6d, 6).translateX(0.9).translateY(0.36).translateZ(-0.5));
   // bottle
   const bottle = cyl(0.1, 0.12, 0.6, 0x2ecc71, 7); bottle.position.set(0.1, 0.32, 0.9); g.add(bottle);
+  // two picnickers facing each other across the spread
+  const a = buildSitter(); a.position.set(-1.05, 0.06, 0.75); a.rotation.y = -2.2; g.add(a);
+  const b = buildSitter(); b.position.set(1.1, 0.06, 0.9); b.rotation.y = 2.4; g.add(b);
+  g.userData.setShocked = (on) => { a.userData.face.setShocked(on); b.userData.face.setShocked(on); };
 
-  g.userData.headHeight = 0.7;
+  g.userData.headHeight = 1.6;
+  freeze(g);
   return g;
 }
 
 // ---------------------------------------------------------------------------
-// Car (convertible-ish low poly). Rolls along the road.
+// Car (open-top convertible, low poly) with a visible driver who panics when a
+// turd bears down. Rolls along the road; the front is +Z (headlights end).
 // ---------------------------------------------------------------------------
 export function buildCar() {
   const g = new THREE.Group();
   const color = pick([0xe74c3c, 0x3498db, 0xf1c40f, 0x2ecc71, 0x9b59b6, 0xecf0f1, 0xe67e22]);
   const body = box(2.0, 0.7, 4.2, color, 0, 0.85, 0);
   g.add(body);
-  const cabin = box(1.8, 0.7, 2.0, 0x222831, 0, 1.45, -0.2);
-  g.add(cabin);
-  // windshield hint
-  g.add(box(1.7, 0.5, 0.12, 0x9bd1ff, 0, 1.5, 0.85));
-  // wheels
+  // open cockpit tub + seat backs instead of the old solid roof box
+  g.add(box(1.8, 0.35, 2.0, 0x222831, 0, 1.32, -0.2));
+  g.add(box(1.7, 0.55, 0.22, 0x3a2f2a, 0, 1.6, -1.05)); // rear seat back
+  g.add(box(1.7, 0.5, 0.2, 0x3a2f2a, 0, 1.58, 0.05));   // front seat back
+  // windshield
+  const shield = box(1.7, 0.55, 0.1, 0x9bd1ff, 0, 1.62, 0.85);
+  shield.rotation.x = 0.18;
+  g.add(shield);
+  // driver behind the wheel, facing the front (+Z)
+  const driver = new THREE.Group();
+  const dskin = pick(SKIN);
+  driver.add(box(0.66, 0.6, 0.42, pick(SHIRTS), 0, 1.62, 0));
+  const dhead = box(0.46, 0.44, 0.42, dskin, 0, 2.1, 0);
+  driver.add(dhead);
+  driver.add(box(0.5, 0.16, 0.46, pick(HAIR), 0, 2.36, 0));
+  const dface = buildFace(dhead, { w: 0.42, h: 0.4, z: -0.23 });
+  driver.position.set(0.42, 0, -0.35);
+  driver.rotation.y = Math.PI; // face plane sits on -Z of the head; spin to face +Z
+  g.add(driver);
+  g.userData.setShocked = dface.setShocked;
+  // steering wheel
+  const wheelRim = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.045, 6, 12), mat(0x1a1a1a));
+  wheelRim.position.set(0.42, 1.5, 0.45);
+  wheelRim.rotation.x = -0.5;
+  g.add(wheelRim);
+  // wheels with hubcaps, tucked under rounded fenders
   const wheels = [];
-  const wheelGeo = new THREE.CylinderGeometry(0.45, 0.45, 0.35, 10);
+  const wheelGeo = new THREE.CylinderGeometry(0.45, 0.45, 0.35, 14);
+  const hubGeo = new THREE.CylinderGeometry(0.2, 0.2, 0.37, 10);
   for (const sx of [-1, 1]) {
     for (const sz of [-1.3, 1.3]) {
       const w = new THREE.Mesh(wheelGeo, mat(0x1a1a1a));
       w.rotation.z = Math.PI / 2;
       w.position.set(1.0 * sx, 0.45, sz);
       w.castShadow = true;
+      const hub = new THREE.Mesh(hubGeo, mat(0xd8d8e0));
+      w.add(hub);
       g.add(w);
       wheels.push(w);
+      const fender = sphere(0.55, color, 10);
+      fender.scale.set(0.55, 0.6, 1.1);
+      fender.position.set(1.0 * sx, 0.72, sz);
+      g.add(fender);
     }
   }
-  // headlights
+  // headlights + bumpers
   for (const sx of [-1, 1]) g.add(box(0.3, 0.2, 0.1, 0xffffcc, 0.6 * sx, 0.85, 2.1));
-  g.userData.headHeight = 1.9;
+  g.add(box(2.1, 0.18, 0.18, 0xd8d8e0, 0, 0.62, 2.12));
+  g.add(box(2.1, 0.18, 0.18, 0xd8d8e0, 0, 0.62, -2.12));
+  g.userData.headHeight = 2.2;
   g.userData.wheels = wheels;
+  freeze(g, wheels);
   return g;
 }
 
@@ -417,6 +749,8 @@ export function buildUmbrella() {
   c2.position.y = 3.25;
   c2.scale.y = 0.6;
   g.add(c2);
+  g.rotation.z = (Math.random() - 0.5) * 0.22; // jaunty beach lean
+  freeze(g);
   return g;
 }
 
@@ -428,18 +762,25 @@ export function buildPalm() {
   trunk.position.y = h / 2;
   trunk.rotation.z = (Math.random() - 0.5) * 0.25;
   g.add(trunk);
-  const top = trunk.position.clone();
-  top.y = h;
+  // fronds: two hinged segments per leaf so each one arcs and droops at the tip
+  // (meshes offset inside pivot groups — cached geometries must not be mutated)
   for (let i = 0; i < 7; i++) {
-    const leaf = box(2.6, 0.12, 0.9, pick([0x2ecc71, 0x27ae60, 0x57d68d]), 0, 0, 0);
-    leaf.geometry.translate(1.3, 0, 0);
-    leaf.position.set(0, h, 0);
-    leaf.rotation.y = (i / 7) * Math.PI * 2;
-    leaf.rotation.z = -0.35 - Math.random() * 0.15;
-    g.add(leaf);
+    const green = pick([0x2ecc71, 0x27ae60, 0x57d68d]);
+    const frond = new THREE.Group();
+    frond.add(box(1.5, 0.12, 0.85, green, 0.75, 0, 0));
+    const tip = new THREE.Group();
+    tip.position.set(1.45, 0, 0);
+    tip.rotation.z = -0.55 - Math.random() * 0.2;
+    tip.add(box(1.4, 0.09, 0.55, green, 0.7, 0, 0));
+    frond.add(tip);
+    frond.position.set(0, h, 0);
+    frond.rotation.y = (i / 7) * Math.PI * 2;
+    frond.rotation.z = -0.25 - Math.random() * 0.2;
+    g.add(frond);
   }
   // coconuts
   for (let i = 0; i < 3; i++) g.add(sphere(0.22, 0x5b3a1a, 6).translateX((Math.random()-0.5)*0.6).translateY(h-0.3).translateZ((Math.random()-0.5)*0.6));
+  freeze(g);
   return g;
 }
 
@@ -465,6 +806,7 @@ export function buildCypress() {
   tip.position.y = h * 0.92;
   g.add(tip);
   g.scale.setScalar(0.85 + Math.random() * 0.4);
+  freeze(g);
   return g;
 }
 
@@ -484,6 +826,7 @@ export function buildPine() {
   c2.position.set((Math.random() - 0.5) * 1.4, h + 0.7, (Math.random() - 0.5) * 1.4);
   g.add(c2);
   g.scale.setScalar(0.9 + Math.random() * 0.4);
+  freeze(g);
   return g;
 }
 
@@ -501,6 +844,7 @@ export function buildRock() {
     rock.castShadow = true; rock.receiveShadow = true;
     g.add(rock);
   }
+  freeze(g);
   return g;
 }
 
@@ -545,6 +889,7 @@ export function buildSuperTurd() {
 
   g.userData.headHeight = 2.4;
   g.userData.halo = halo;
+  freeze(g);
   return g;
 }
 
@@ -557,6 +902,7 @@ export function buildPoop() {
   const tip = cone(0.12, 0.3, 0x5e3c1f, 6); tip.position.y = 0.68;
   g.add(s1, s2, s3, tip);
   g.userData.spinnable = [s1, s2, s3, tip];
+  freeze(g); // the whole group tumbles; the blobs are static within it
   return g;
 }
 
@@ -578,6 +924,7 @@ export function buildFireball() {
   tail.position.y = 0.85; // points up = trails behind the falling comet
   g.add(glow, mid, core, tail);
   g.userData.spinnable = [core, mid];
+  freeze(g);
   return g;
 }
 
@@ -590,91 +937,176 @@ export function buildFireball() {
 // venues pack dozens of them in tight rows.
 // ===========================================================================
 
-const HAIR = [0x2a1a0a, 0x4a3120, 0x1a1a1a, 0x6b4a2a, 0xc4a35a, 0x8a8a8a];
 const WED_PANTS = [0x394a59, 0x2a2a3a, 0x5a4a6a, 0x6a3a3a, 0x335a45];
 
 // A wedding guest sitting on a folding chair, facing -Z (toward the altar).
 export function buildSeatedGuest({ shirt = pick(SHIRTS), skin = pick(SKIN), pants = pick(WED_PANTS), chair = 0xe8e0d2 } = {}) {
   const g = new THREE.Group();
   const seatY = 0.55;
+  const cloth = clothMat(shirt, pick(CLOTH_PATTERNS));
+  const pantsM = clothMat(pants, 'solid');
   g.add(box(0.64, 0.1, 0.58, chair, 0, seatY, 0));            // seat
   g.add(box(0.64, 0.6, 0.1, chair, 0, seatY + 0.35, 0.26));   // backrest
   g.add(box(0.6, seatY, 0.1, chair, 0, seatY / 2, 0.24));     // back legs
   g.add(box(0.6, seatY, 0.1, chair, 0, seatY / 2, -0.24));    // front legs
-  g.add(box(0.54, 0.22, 0.44, pants, 0, seatY + 0.16, -0.1)); // thighs
-  g.add(box(0.44, 0.5, 0.22, pants, 0, seatY - 0.15, -0.32)); // shins
-  g.add(box(0.72, 0.78, 0.44, shirt, 0, seatY + 0.62, 0.04)); // torso
-  const head = box(0.5, 0.48, 0.46, skin, 0, seatY + 1.2, 0.04); // head
+  for (const sx of [-1, 1]) {
+    const thigh = capsule(0.15, 0.26, pantsM, 0.16 * sx, seatY + 0.16, -0.1);
+    thigh.rotation.x = Math.PI / 2;   // horizontal, knees forward
+    g.add(thigh);
+    g.add(capsule(0.12, 0.28, pantsM, 0.16 * sx, seatY - 0.14, -0.34)); // shin
+    const foot = sphere(0.13, 0x3a2f2a, 7);
+    foot.scale.set(1, 0.55, 1.5);
+    foot.position.set(0.16 * sx, seatY - 0.42, -0.4);
+    g.add(foot);
+  }
+  const torso = capsule(0.34, 0.36, cloth, 0, seatY + 0.6, 0.04, 10); // torso
+  torso.scale.set(1.1, 1, 0.68);
+  g.add(torso);
+  // arms hinged at the shoulder, resting toward the lap — they fly up in panic
+  const arms = [];
+  for (const sx of [-1, 1]) {
+    const shoulder = new THREE.Group();
+    shoulder.position.set(0.44 * sx, seatY + 0.94, 0.04);
+    shoulder.add(capsule(0.11, 0.32, cloth, 0, -0.26, 0));
+    const hand = sphere(0.11, skin, 7);
+    hand.position.set(0, -0.56, -0.02);
+    shoulder.add(hand);
+    shoulder.rotation.x = 0.4;
+    shoulder.userData.side = sx;
+    g.add(shoulder);
+    arms.push(shoulder);
+  }
+  g.add(capsule(0.1, 0.1, skin, 0, seatY + 1.0, 0.04));
+  const head = sphere(0.27, skin, 10);
+  head.position.set(0, seatY + 1.2, 0.04);
   g.add(head);
-  g.userData.setShocked = buildFace(head, { w: 0.46, h: 0.44, z: -0.24 }).setShocked;
-  g.add(box(0.54, 0.2, 0.5, pick(HAIR), 0, seatY + 1.42, 0.06)); // hair
+  const face = buildFace(head, { w: 0.4, h: 0.4, z: -0.26 });
+  const crown = sphere(0.29, pick(HAIR), 9);
+  crown.scale.set(1.04, 0.76, 1.04);
+  crown.position.set(0, seatY + 1.31, 0.08);
+  g.add(crown);
+  // some guests dress up with a pastel occasion hat
+  if (Math.random() < 0.3) {
+    const hc = pick([0xffd1dc, 0xfff3d6, 0xd9c8f0, 0xc8e8d9, 0xf7f7fb]);
+    const brim = cyl(0.42, 0.46, 0.05, hc, 14); brim.position.set(0, seatY + 1.4, 0.06); g.add(brim);
+    const dome = sphere(0.26, hc, 9); dome.scale.set(1.1, 0.62, 1.1); dome.position.set(0, seatY + 1.44, 0.06); g.add(dome);
+  }
+  g.userData.arms = arms;
+  g.userData.setShocked = (on) => {
+    face.setShocked(on);
+    for (const a of arms) {
+      if (on) a.rotation.set((Math.random() - 0.5) * 0.4, 0, a.userData.side * (2.25 + Math.random() * 0.5));
+      else a.rotation.set(0.4, 0, 0);
+    }
+  };
   g.userData.headHeight = seatY + 1.52;
+  freeze(g);
   return g;
 }
 
-// The groom: dark suit, white shirt front, bowtie + boutonniere.
+// The groom: dark suit, white shirt front, bowtie, boutonniere + top hat.
 export function buildGroom() {
   const suit = pick([0x2b2b3a, 0x1c1c28, 0x33333f]);
-  const g = buildPerson({ scale: 1.0, shirt: suit, pants: suit, skin: pick(SKIN) });
+  const g = buildPerson({ scale: 1.0, shirt: suit, pants: suit, skin: pick(SKIN), tank: false, jitter: false });
   g.add(box(0.34, 0.7, 0.12, 0xffffff, 0, 1.6, -0.26)); // shirt front
   g.add(box(0.22, 0.1, 0.1, 0x111111, 0, 1.72, -0.32)); // bowtie
   g.add(sphere(0.1, 0xff5d8f, 6).translateX(0.3).translateY(1.7).translateZ(-0.26)); // boutonniere
+  const brim = cyl(0.5, 0.5, 0.06, 0x16161c, 12); brim.position.set(0, 2.84, 0); g.add(brim);
+  const crown = cyl(0.34, 0.34, 0.42, 0x16161c, 10); crown.position.set(0, 3.06, 0); g.add(crown);
+  freeze(g);
   return g;
 }
 
-// The bride: white gown (cone skirt), veil, bouquet.
+// The bride: white gown (cone skirt), veil, tiara, bouquet.
 export function buildBride() {
   const white = 0xffffff;
-  const g = buildPerson({ scale: 1.0, shirt: white, pants: white, skin: pick(SKIN) });
+  const g = buildPerson({ scale: 1.0, shirt: white, pants: white, skin: pick(SKIN), tank: false, jitter: false });
   const skirt = cone(0.85, 1.3, white, 12); skirt.position.y = 0.78; g.add(skirt);
   const veil = new THREE.Mesh(new THREE.PlaneGeometry(0.78, 1.2), mat(0xffffff, { transparent: true, opacity: 0.7, side: THREE.DoubleSide }));
   veil.position.set(0, 2.05, 0.34); g.add(veil);
+  const tiara = new THREE.Mesh(new THREE.TorusGeometry(0.26, 0.045, 6, 12), mat(0xffd23f));
+  tiara.rotation.x = Math.PI / 2 - 0.15; tiara.position.set(0, 2.78, 0); g.add(tiara);
   for (let i = 0; i < 6; i++) {
     g.add(sphere(0.11, pick([0xff8fab, 0xffd1dc, 0xffffff, 0xffe066]), 6)
       .translateX(0.5 + (Math.random() - 0.5) * 0.3).translateY(1.3 + (Math.random() - 0.5) * 0.3).translateZ(-0.3));
   }
   g.userData.headHeight = 2.75;
+  freeze(g);
   return g;
 }
 
 // The priest: dark cassock + white collar, holding a book.
 export function buildPriest() {
   const robe = 0x1c1c22;
-  const g = buildPerson({ scale: 1.0, shirt: robe, pants: robe, skin: pick(SKIN) });
+  const g = buildPerson({ scale: 1.0, shirt: robe, pants: robe, skin: pick(SKIN), tank: false, jitter: false });
   const cassock = cone(0.7, 1.4, robe, 10); cassock.position.y = 0.78; g.add(cassock);
   g.add(box(0.4, 0.16, 0.12, 0xffffff, 0, 1.96, -0.27)); // collar
   g.add(box(0.3, 0.4, 0.1, 0x7a2d2d, 0.42, 1.4, -0.3));  // book
   g.userData.headHeight = 2.75;
+  freeze(g);
   return g;
 }
 
 // A rock band member. role: 'mic' | 'guitar' | 'bass' | 'drums'.
 export function buildBandMember(role = 'guitar') {
   const shirt = pick([0x1a1a1a, 0x2a2a3a, 0x4a1f2f, 0x1f2f4a, 0x3a1f4a]);
-  const g = buildPerson({ scale: 1.0, shirt, pants: 0x14141a, skin: pick(SKIN) });
+  const g = buildPerson({ scale: 1.0, shirt, pants: 0x14141a, skin: pick(SKIN), jitter: false });
+  // stage presence: a bright mohawk on most of the band
+  if (Math.random() < 0.6) {
+    g.add(box(0.14, 0.34, 0.62, pick([0xff2e4d, 0x35ff7a, 0x3bdcff, 0xffd23f]), 0, 2.55, 0));
+  }
   if (role === 'drums') {
     const kit = new THREE.Group();
     for (const [dx, dz, r, c] of [[-0.95, 0.95, 0.42, 0xcc2222], [0, 1.05, 0.5, 0xeeeeee], [0.95, 0.95, 0.42, 0x2266cc]]) {
       const drum = cyl(r, r, 0.42, c, 12); drum.position.set(dx, 1.0, dz); kit.add(drum);
     }
+    const kick = cyl(0.55, 0.55, 0.5, 0x101014, 14); kick.rotation.x = Math.PI / 2; kick.position.set(0, 0.55, 1.55); kit.add(kick);
     const cym = cyl(0.5, 0.5, 0.04, 0xd4af37, 14); cym.position.set(1.2, 1.7, 0.5); kit.add(cym);
+    const hat = cyl(0.36, 0.36, 0.04, 0xd4af37, 12); hat.position.set(-1.25, 1.5, 0.5); kit.add(hat);
     g.add(kit);
   } else if (role === 'mic') {
-    const stand = cyl(0.04, 0.04, 1.7, 0x222222, 6); stand.position.set(0, 0.85, -0.55); g.add(stand);
-    g.add(sphere(0.12, 0x333333, 7).translateY(1.8).translateZ(-0.55));
+    // frontman: mic in a raised fist (the pose survives shock round-trips)
+    const armUp = g.userData.arms[1];
+    const mic = cyl(0.05, 0.07, 0.34, 0x222228, 6); mic.position.set(0.04, -1.0, 0); armUp.add(mic);
+    const micTip = sphere(0.11, 0x44444c, 7); micTip.position.set(0.04, -1.2, 0); armUp.add(micTip);
+    const strike = () => armUp.rotation.set(0, 0, 2.75);
+    strike();
+    const baseShock = g.userData.setShocked;
+    g.userData.setShocked = (on) => { baseShock(on); if (!on) strike(); };
   } else {
     const body = box(0.5, 0.74, 0.16, role === 'bass' ? 0x202024 : 0xcc3322, 0.32, 1.2, -0.32);
     body.rotation.z = 0.5; g.add(body);
     const neck = box(0.12, 1.2, 0.1, 0x6b4a2a, -0.22, 1.5, -0.32);
     neck.rotation.z = 0.5; g.add(neck);
+    // strap across the chest
+    const strap = box(0.16, 1.1, 0.06, 0x3a2a1a, 0, 1.45, -0.3);
+    strap.rotation.z = -0.7; g.add(strap);
   }
   g.userData.headHeight = 2.75;
+  freeze(g);
   return g;
 }
 
 // A standing concert-goer in the throng (reuses the beach person model).
+// Arms start raised — the mosh-pit animation pumps them to the beat. A few
+// fans hold up glowing phones, so the pit twinkles from the air at night.
 export function buildFan() {
-  return buildPerson({ scale: 0.95, shirt: pick(SHIRTS), skin: pick(SKIN), pants: pick([0x222228, 0x394a59, 0x14141a, 0x4a2f3a]) });
+  const p = buildPerson({ scale: 0.95, shirt: pick(SHIRTS), skin: pick(SKIN), pants: pick([0x222228, 0x394a59, 0x14141a, 0x4a2f3a]), hat: 'cap' });
+  for (const a of p.userData.arms) a.rotation.z = a.userData.side * 2.5;
+  if (Math.random() < 0.25) {
+    const arm = p.userData.arms[Math.random() < 0.5 ? 0 : 1];
+    const phone = box(0.16, 0.3, 0.05, 0x16161c, 0.04 * arm.userData.side, -1.1, 0);
+    arm.add(phone);
+    const glow = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.22, 0.36),
+      new THREE.MeshBasicMaterial({ color: 0xbfe8ff, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }),
+    );
+    glow.position.set(0.04 * arm.userData.side, -1.1, -0.04);
+    glow.rotation.y = Math.PI;
+    arm.add(glow);
+    freeze(arm);
+  }
+  return p;
 }
 
 // ---- decor props (no targets) -------------------------------------------
@@ -695,6 +1127,7 @@ export function buildArch() {
     const x = (-1 + 2 * (i / 21)) * 3.4;
     g.add(sphere(0.16 + Math.random() * 0.12, pick(blooms), 6).translateX(x).translateY(5).translateZ(0));
   }
+  freeze(g);
   return g;
 }
 
@@ -708,6 +1141,7 @@ export function buildFlowerStand() {
     g.add(sphere(0.16, pick(blooms), 6)
       .translateX((Math.random() - 0.5) * 0.5).translateY(1.6 + Math.random() * 0.3).translateZ((Math.random() - 0.5) * 0.5));
   }
+  freeze(g);
   return g;
 }
 
@@ -730,6 +1164,7 @@ export function buildStage(width = 30, depth = 12) {
     lamps.push(lamp);
   }
   g.userData.lamps = lamps;
+  freeze(g);
   return g;
 }
 
@@ -742,6 +1177,102 @@ export function buildSpeakerStack() {
     const c1 = cyl(0.5, 0.7, 0.3, 0x1a1a1f, 12); c1.rotation.x = Math.PI / 2; c1.position.set(0, y + 0.4, 1.0); g.add(c1);
     const c2 = cyl(0.32, 0.46, 0.3, 0x1a1a1f, 12); c2.rotation.x = Math.PI / 2; c2.position.set(0, y - 0.5, 1.0); g.add(c2);
   }
+  freeze(g);
+  return g;
+}
+
+// ---- sky / sea / sand scenery props --------------------------------------
+
+// A classic red-and-white lifeguard tower up on stilts (beach decoration).
+export function buildLifeguardTower() {
+  const g = new THREE.Group();
+  const red = 0xe84a4a, white = 0xfaf6ee;
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    const leg = cyl(0.09, 0.11, 2.4, white, 6);
+    leg.position.set(sx * 1.05, 1.2, sz * 0.85);
+    g.add(leg);
+  }
+  g.add(box(2.7, 0.16, 2.3, white, 0, 2.45, 0));        // deck
+  g.add(box(2.3, 1.5, 1.9, red, 0, 3.3, 0));            // cabin
+  g.add(box(2.1, 0.7, 0.2, 0x9bd1ff, 0, 3.45, -0.98));  // window front
+  g.add(box(2.9, 0.14, 2.5, white, 0, 4.18, 0));        // roof
+  const ramp = box(0.8, 0.1, 2.8, white, 0, 1.45, 1.9);
+  ramp.rotation.x = -0.6;
+  g.add(ramp);
+  const pole = cyl(0.04, 0.04, 1.2, white, 5); pole.position.set(1.25, 4.8, 0.9); g.add(pole);
+  g.add(poly([[1.25, 5.4, 0.9], [1.25, 5.05, 0.9], [1.85, 5.22, 0.9]], red)); // pennant
+  freeze(g);
+  return g;
+}
+
+// A sandcastle with corner turrets, cone roofs and a tiny flag.
+export function buildSandcastle() {
+  const g = new THREE.Group();
+  const sand1 = 0xe6c98a, sand2 = 0xdaba76;
+  g.add(box(1.7, 0.55, 1.7, sand1, 0, 0.28, 0)); // base keep
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    const turret = cyl(0.3, 0.34, 1.0, sand2, 7);
+    turret.position.set(sx * 0.85, 0.5, sz * 0.85);
+    g.add(turret);
+    const roof = cone(0.34, 0.42, pick([0xff5b5b, 0x3a6ea5, 0xffd23f]), 7);
+    roof.position.set(sx * 0.85, 1.2, sz * 0.85);
+    g.add(roof);
+  }
+  const keep = cyl(0.42, 0.48, 1.3, sand1, 8); keep.position.set(0, 0.95, 0); g.add(keep);
+  const keepRoof = cone(0.5, 0.5, sand2, 8); keepRoof.position.set(0, 1.85, 0); g.add(keepRoof);
+  const mast = cyl(0.025, 0.025, 0.5, 0x8a6a4a, 4); mast.position.set(0, 2.3, 0); g.add(mast);
+  g.add(poly([[0, 2.55, 0], [0, 2.38, 0], [0.3, 2.47, 0]], 0xff2e4d)); // flag
+  g.scale.setScalar(0.8 + Math.random() * 0.5);
+  freeze(g);
+  return g;
+}
+
+// A puffy low-poly cloud (a few squashed faceted spheres). Drifts in the sky.
+export function buildCloud() {
+  const g = new THREE.Group();
+  const n = 3 + ((Math.random() * 3) | 0);
+  for (let i = 0; i < n; i++) {
+    const r = 1.7 + Math.random() * 2.1;
+    const s = sphere(r, 0xffffff, 7);
+    s.castShadow = false;
+    s.position.set((i - (n - 1) / 2) * 2.3, (Math.random() - 0.5) * 0.9, (Math.random() - 0.5) * 2.2);
+    s.scale.y = 0.5 + Math.random() * 0.2;
+    g.add(s);
+  }
+  g.scale.setScalar(1.2 + Math.random() * 1.4);
+  freeze(g);
+  return g;
+}
+
+// A little sailboat for the bay. Bobbed/heeled by the world's update loop.
+export function buildBoat() {
+  const g = new THREE.Group();
+  const hull = box(1.6, 0.7, 4.6, pick([0xf7f7fb, 0xff6b6b, 0x4ecdc4, 0x3a6ea5]), 0, 0.5, 0);
+  g.add(hull);
+  g.add(box(1.3, 0.16, 4.0, 0xf2e3c2, 0, 0.92, 0)); // deck
+  const mast = cyl(0.06, 0.08, 3.6, 0x8a6a4a, 6);
+  mast.position.set(0, 2.6, -0.3);
+  g.add(mast);
+  g.add(poly([[0.04, 4.3, -0.3], [0.04, 1.2, -0.3], [1.8, 1.2, -0.3]], 0xffffff));            // mainsail
+  g.add(poly([[-0.04, 3.6, -0.45], [-0.04, 1.3, -0.45], [-1.2, 1.3, -0.45]], 0xffe8c2));      // jib
+  freeze(g);
+  return g;
+}
+
+// A beach towel laid flat on the sand (pure decoration).
+export function buildTowel() {
+  const g = new THREE.Group();
+  const c = pick(SHIRTS);
+  const t = new THREE.Mesh(new THREE.PlaneGeometry(1.7, 2.8), mat(c, { side: THREE.DoubleSide }));
+  t.rotation.x = -Math.PI / 2;
+  t.position.y = 0.04;
+  t.receiveShadow = true;
+  g.add(t);
+  const stripe = new THREE.Mesh(new THREE.PlaneGeometry(1.7, 0.5), mat(0xffffff, { side: THREE.DoubleSide }));
+  stripe.rotation.x = -Math.PI / 2;
+  stripe.position.set(0, 0.05, -0.9);
+  g.add(stripe);
+  freeze(g);
   return g;
 }
 
@@ -752,6 +1283,7 @@ export function buildBarrier(len = 10) {
   g.add(box(0.15, 0.15, len, 0x3a3a42, 0, 0.55, 0));
   const n = Math.max(2, Math.round(len / 2.5));
   for (let i = 0; i <= n; i++) g.add(box(0.12, 1.1, 0.12, 0x4a4a52, 0, 0.55, -len / 2 + i * (len / n)));
+  freeze(g);
   return g;
 }
 
