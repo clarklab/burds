@@ -197,6 +197,15 @@ const sup = await page.evaluate(async () => {
   g.weaponMode = 'scatter';
   g._fireScatter(0.5);
   out.scatterCount = g.poops.length;
+  // the volley must land as one round cluster: every pellet within the spray
+  // disc of the volley's centroid (rows/columns would also pass, but a stray
+  // mis-solved velocity would not)
+  {
+    const lx = g.poops.map((pp) => pp.landing.x), lz = g.poops.map((pp) => pp.landing.z);
+    const cx = lx.reduce((a, b) => a + b, 0) / lx.length;
+    const cz = lz.reduce((a, b) => a + b, 0) / lz.length;
+    out.scatterSpread = +Math.max(...g.poops.map((pp) => Math.hypot(pp.landing.x - cx, pp.landing.z - cz))).toFixed(1);
+  }
   // clean up so the rest of the run starts from a normal state
   for (const pp of g.poops) g.scene.remove(pp.group); g.poops = [];
   g._endSuper();
@@ -222,7 +231,10 @@ if (!(sup.weaponMode === 'fire' && sup.fireAura && sup.badgeFire && sup.poopIsFi
   throw new Error('Choosing FIRE did not apply fire mode + bonus: ' + JSON.stringify(sup));
 }
 if (sup.scatterCount !== 10) {
-  throw new Error('Scatter did not fire a 10-pellet grid volley: ' + JSON.stringify(sup));
+  throw new Error('Scatter did not fire a 10-pellet volley: ' + JSON.stringify(sup));
+}
+if (!(sup.scatterSpread > 2 && sup.scatterSpread < 12)) {
+  throw new Error('Scatter spray is not a tight circle: ' + JSON.stringify(sup));
 }
 if (!(sup.stack4 === 4 && sup.stack4AddedTime && !sup.stack5PlusAddedTime && sup.mult6 > sup.mult3)) {
   throw new Error('Super timer did not cap after the 4th stack: ' + JSON.stringify(sup));
