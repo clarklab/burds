@@ -356,115 +356,298 @@ export function buildReticle() {
   return g;
 }
 
-// The super-Saiyan aura: a pulsing golden energy shell, an upward flame, and a
-// crackle of lightning bolts. Returned as a group meant to be parented to the
-// bird; call update(dt, intensity) each frame while it's visible.
+// ---------------------------------------------------------------------------
+// Power-up auras (super-Saiyan lightning + TURD FIRE). Both lean on the same
+// two tricks: a redrawable canvas texture that flickers like real lightning /
+// fire, shown on a "curtain" of crossed planes so it reads as a 3D volume from
+// any angle without needing the camera, layered over sharper 3D detail.
+// ---------------------------------------------------------------------------
+
+// A small canvas texture that gets repainted on every flicker. `draw(ctx, w, h,
+// intensity)` runs on each redraw — cheap enough to re-roll ~15×/sec.
+function animTexture(w, h, draw) {
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const ctx = c.getContext('2d');
+  const tex = new THREE.CanvasTexture(c);
+  return { tex, redraw(intensity) { draw(ctx, w, h, intensity); tex.needsUpdate = true; } };
+}
+
+// Crossed vertical planes (double-sided, additive) all sharing one animated
+// texture + material, so the effect looks volumetric from every angle.
+function auraCurtain(tex, { count = 3, w = 7.5, h = 9, y = 1.4, color = 0xffffff } = {}) {
+  const geo = new THREE.PlaneGeometry(w, h);
+  const material = new THREE.MeshBasicMaterial({
+    map: tex, color, transparent: true, opacity: 0,
+    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+  });
+  const planes = [];
+  for (let i = 0; i < count; i++) {
+    const m = new THREE.Mesh(geo, material);
+    m.rotation.y = (i / count) * Math.PI;
+    m.position.y = y;
+    planes.push(m);
+  }
+  return { planes, material };
+}
+
+// Paint glowing, forking lightning down a transparent canvas (white core inside
+// a fat electric-blue glow).
+function drawLightning(ctx, w, h, intensity) {
+  ctx.clearRect(0, 0, w, h);
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  const bolts = 2 + Math.round(intensity * 3);
+  for (let b = 0; b < bolts; b++) {
+    const pts = [];
+    let x = w * (0.15 + Math.random() * 0.7), y = 0;
+    const segs = 8;
+    for (let s = 0; s <= segs; s++) { pts.push([x, y]); y += h / segs; x += (Math.random() - 0.5) * w * 0.26; }
+    const trace = (lw, col) => {
+      ctx.lineWidth = lw; ctx.strokeStyle = col;
+      ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+      ctx.stroke();
+    };
+    trace(9, 'rgba(110,180,255,0.45)');   // fat blue glow
+    trace(4, 'rgba(185,225,255,0.85)');   // mid
+    trace(1.6, 'rgba(255,255,255,1)');    // white core
+    // a couple of forks branching off the main channel
+    for (let f = 0; f < 2; f++) {
+      const i0 = 2 + ((Math.random() * (pts.length - 3)) | 0);
+      let [fx, fy] = pts[i0];
+      ctx.lineWidth = 1.4; ctx.strokeStyle = 'rgba(210,235,255,0.8)';
+      ctx.beginPath(); ctx.moveTo(fx, fy);
+      const fs = 2 + ((Math.random() * 2) | 0);
+      for (let s = 0; s < fs; s++) { fx += (Math.random() - 0.5) * w * 0.34; fy += h * 0.1; ctx.lineTo(fx, fy); }
+      ctx.stroke();
+    }
+  }
+}
+
+// Paint a field of additive flame tongues (hot white-yellow base → red tips).
+function drawFire(ctx, w, h, intensity) {
+  ctx.clearRect(0, 0, w, h);
+  ctx.globalCompositeOperation = 'lighter';
+  const tongues = 6 + Math.round(intensity * 3);
+  for (let i = 0; i < tongues; i++) {
+    const x = (w * (i + 0.5)) / tongues + (Math.random() - 0.5) * w * 0.12;
+    const fh = h * (0.5 + Math.random() * 0.45);
+    const fw = (w / tongues) * (0.9 + Math.random() * 0.8);
+    const g = ctx.createLinearGradient(0, h, 0, h - fh);
+    g.addColorStop(0, 'rgba(255,255,225,0.95)');
+    g.addColorStop(0.22, 'rgba(255,205,70,0.9)');
+    g.addColorStop(0.55, 'rgba(255,95,15,0.65)');
+    g.addColorStop(1, 'rgba(180,15,0,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(x - fw / 2, h);
+    ctx.quadraticCurveTo(x - fw * 0.4 + (Math.random() - 0.5) * fw, h - fh * 0.55, x + (Math.random() - 0.5) * fw * 0.4, h - fh);
+    ctx.quadraticCurveTo(x + fw * 0.4 + (Math.random() - 0.5) * fw, h - fh * 0.55, x + fw / 2, h);
+    ctx.closePath(); ctx.fill();
+  }
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+// The super-Saiyan aura: an electric energy shell + golden updraft, a strobing
+// curtain of glowing forked lightning, sharp 3D crackle bolts arcing around the
+// bird, a spinning energy ring, a core flash that pops on every strike, and
+// scattering sparks. Parent to the bird; call update(dt, intensity).
 export function buildSuperAura() {
   const group = new THREE.Group();
 
   const shell = new THREE.Mesh(
     new THREE.IcosahedronGeometry(3.4, 1),
-    new THREE.MeshBasicMaterial({ color: 0xffe24a, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }),
+    new THREE.MeshBasicMaterial({ color: 0xbfe6ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }),
   );
   group.add(shell);
 
   const flame = new THREE.Mesh(
-    new THREE.ConeGeometry(2.2, 6, 12, 1, true),
-    new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, depthWrite: false }),
+    new THREE.ConeGeometry(2.2, 6.5, 12, 1, true),
+    new THREE.MeshBasicMaterial({ color: 0xffe79a, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, depthWrite: false }),
   );
-  flame.position.y = 2.0;
+  flame.position.y = 2.2;
   group.add(flame);
 
-  const SEG = 6, BOLTS = 7;
+  // bright core flash that pops white on every lightning strike
+  const flashCore = new THREE.Mesh(
+    new THREE.SphereGeometry(1.1, 10, 10),
+    new THREE.MeshBasicMaterial({ color: 0xeaf6ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }),
+  );
+  group.add(flashCore);
+
+  // fast-spinning electric ring
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(2.6, 0.06, 8, 32),
+    new THREE.MeshBasicMaterial({ color: 0x9fd4ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }),
+  );
+  ring.rotation.x = Math.PI / 2;
+  group.add(ring);
+
+  // glowing forked-lightning curtain (the headline upgrade)
+  const lt = animTexture(128, 256, drawLightning);
+  const curtain = auraCurtain(lt.tex, { count: 3, w: 7.5, h: 9, y: 1.4, color: 0xcdeaff });
+  for (const p of curtain.planes) group.add(p);
+
+  // sharp 3D crackle bolts arcing around the bird
+  const SEG = 7, BOLTS = 9;
   const bolts = [];
   for (let i = 0; i < BOLTS; i++) {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array((SEG + 1) * 3), 3));
-    const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false }));
+    const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xdfefff, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false }));
     group.add(line);
     bolts.push(line);
   }
-
-  // Re-jag every bolt into a fresh forking arc around the bird.
-  function regen() {
+  function regenBolts() {
     for (const line of bolts) {
       const pos = line.geometry.attributes.position;
       const ang = Math.random() * Math.PI * 2;
-      const rad = 1.2 + Math.random() * 1.3;
-      const top = 2 + Math.random() * 4;
+      const rad = 1.1 + Math.random() * 1.6;
+      const top = 2.5 + Math.random() * 4;
       for (let s = 0; s <= SEG; s++) {
         const f = s / SEG;
-        const r = rad * (1 - f * 0.3);
+        const r = rad * (1 - f * 0.25);
         pos.setXYZ(s,
-          Math.cos(ang) * r + (Math.random() - 0.5) * 0.7,
-          -1 + f * top + (Math.random() - 0.5) * 0.5,
-          Math.sin(ang) * r + (Math.random() - 0.5) * 0.7,
+          Math.cos(ang) * r + (Math.random() - 0.5) * 0.9,
+          -1.2 + f * top + (Math.random() - 0.5) * 0.6,
+          Math.sin(ang) * r + (Math.random() - 0.5) * 0.9,
         );
       }
       pos.needsUpdate = true;
     }
   }
-  regen();
+  regenBolts();
+  lt.redraw(1);
 
-  let t = 0, flick = 0;
+  // popping spark points scattered on the shell
+  const sparks = [];
+  for (let i = 0; i < 9; i++) {
+    const s = new THREE.Mesh(
+      new THREE.OctahedronGeometry(0.16),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }),
+    );
+    group.add(s);
+    sparks.push(s);
+  }
+
+  let t = 0, flick = 0, flash = 0;
   function update(dt, intensity = 1) {
     t += dt; flick += dt;
+    flash = Math.max(0, flash - dt * 7);   // strobe decay between strikes
     const pulse = 0.5 + 0.5 * Math.sin(t * 22);
-    shell.material.opacity = (0.12 + 0.2 * intensity) * (0.5 + 0.5 * pulse);
-    shell.scale.setScalar(1 + 0.06 * pulse * intensity);
-    flame.material.opacity = (0.1 + 0.18 * intensity) * pulse;
+    shell.material.opacity = (0.12 + 0.22 * intensity) * (0.5 + 0.5 * pulse);
+    shell.scale.setScalar(1 + 0.07 * pulse * intensity);
+    flame.material.opacity = (0.1 + 0.2 * intensity) * pulse;
     flame.rotation.y += dt * 3;
-    if (flick > 0.045) {
-      flick = 0;
-      regen();
+    ring.material.opacity = (0.25 + 0.5 * intensity) * (0.4 + 0.6 * pulse);
+    ring.rotation.z += dt * 7;
+    ring.scale.setScalar(1 + 0.08 * Math.sin(t * 9));
+    // fresh strike: re-jag bolts, repaint the lightning, flash, re-scatter sparks
+    if (flick > 0.05) {
+      flick = 0; flash = 1;
+      regenBolts();
+      lt.redraw(intensity);
       const showN = Math.round(bolts.length * (0.4 + 0.6 * intensity));
       bolts.forEach((b, i) => { b.visible = i < showN && Math.random() < 0.85; });
+      for (const s of sparks) {
+        const a = Math.random() * Math.PI * 2, e = Math.random() * Math.PI - Math.PI / 2, r = 2.4 + Math.random() * 0.9;
+        s.position.set(Math.cos(a) * Math.cos(e) * r, Math.sin(e) * r + 0.5, Math.sin(a) * Math.cos(e) * r);
+        s.visible = Math.random() < 0.7;
+      }
     }
     const bo = 0.6 + 0.4 * intensity;
     for (const b of bolts) b.material.opacity = bo * (0.6 + 0.4 * Math.random());
+    curtain.material.opacity = (0.25 + 0.5 * intensity) * (0.35 + 0.65 * flash);
+    flashCore.material.opacity = 0.7 * intensity * flash;
+    flashCore.scale.setScalar(0.8 + 0.6 * flash);
+    for (const s of sparks) s.material.opacity = intensity * (0.5 + 0.5 * flash);
   }
 
   group.visible = false;
   return { group, update };
 }
 
-// The TURD FIRE aura: a ring of flickering flame licks and a red-hot energy
-// shell engulfing the bird. Parent to the bird; call update(dt, intensity).
+// The TURD FIRE aura: a red-hot energy shell, a roaring volumetric flame
+// curtain, two tiers of flickering flame licks (tall red outer + short hot
+// inner), and a stream of rising, recycling embers. Parent to the bird; call
+// update(dt, intensity).
 export function buildFireAura() {
   const group = new THREE.Group();
 
   const shell = new THREE.Mesh(
     new THREE.IcosahedronGeometry(3.5, 1),
-    new THREE.MeshBasicMaterial({ color: 0xff3b00, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }),
+    new THREE.MeshBasicMaterial({ color: 0xff4a00, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }),
   );
   group.add(shell);
 
-  const cols = [0xff2b00, 0xff6a00, 0xffb02e];
+  // roaring volumetric flame body
+  const ft = animTexture(128, 256, drawFire);
+  const curtain = auraCurtain(ft.tex, { count: 3, w: 7.5, h: 9, y: 1.6, color: 0xffffff });
+  for (const p of curtain.planes) group.add(p);
+
+  // two tiers of flame-lick cones: tall red outer ring + short hot inner ring
+  const mkFlame = (col, height, baseR) => new THREE.Mesh(
+    new THREE.ConeGeometry(baseR, height, 7, 1, true),
+    new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.75, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, depthWrite: false }),
+  );
   const flames = [];
   for (let i = 0; i < 11; i++) {
     const a = (i / 11) * Math.PI * 2;
-    const fl = new THREE.Mesh(
-      new THREE.ConeGeometry(0.55, 2.6, 6, 1, true),
-      new THREE.MeshBasicMaterial({ color: cols[i % cols.length], transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, depthWrite: false }),
-    );
-    const r = 1.3 + Math.random() * 0.9;
-    fl.position.set(Math.cos(a) * r, 1.1 + Math.random() * 0.9, Math.sin(a) * r);
+    const fl = mkFlame(0xff5a12, 3.0, 0.55);
+    const r = 1.4 + Math.random() * 0.9;
+    fl.position.set(Math.cos(a) * r, 1.3 + Math.random() * 0.9, Math.sin(a) * r);
     group.add(fl);
-    flames.push(fl);
+    flames.push({ m: fl, ph: Math.random() * 6, sp: 16 + Math.random() * 8, hi: 0.8 });
+  }
+  for (let i = 0; i < 7; i++) {
+    const a = (i / 7) * Math.PI * 2 + 0.3;
+    const fl = mkFlame(0xffd24a, 2.0, 0.4);
+    const r = 0.7 + Math.random() * 0.5;
+    fl.position.set(Math.cos(a) * r, 1.0 + Math.random() * 0.6, Math.sin(a) * r);
+    group.add(fl);
+    flames.push({ m: fl, ph: Math.random() * 6, sp: 20 + Math.random() * 8, hi: 1.0 });
   }
 
-  let t = 0;
+  // rising embers that recycle from the base
+  const embers = [];
+  for (let i = 0; i < 12; i++) {
+    const e = new THREE.Mesh(
+      new THREE.SphereGeometry(0.08 + Math.random() * 0.07, 6, 6),
+      new THREE.MeshBasicMaterial({ color: Math.random() < 0.5 ? 0xffb02e : 0xff5a12, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }),
+    );
+    e.userData.reset = () => {
+      e.position.set((Math.random() - 0.5) * 3, 0.2 + Math.random() * 0.5, (Math.random() - 0.5) * 3);
+      e.userData.vy = 1.5 + Math.random() * 2.2;
+      e.userData.life = 0.6 + Math.random() * 0.8;
+      e.userData.t = Math.random() * e.userData.life;
+    };
+    e.userData.reset();
+    group.add(e);
+    embers.push(e);
+  }
+
+  let t = 0, flick = 0;
   function update(dt, intensity = 1) {
-    t += dt;
+    t += dt; flick += dt;
     const pulse = 0.5 + 0.5 * Math.sin(t * 26);
-    shell.material.opacity = (0.14 + 0.2 * intensity) * (0.5 + 0.5 * pulse);
-    shell.scale.setScalar(1 + 0.05 * pulse);
-    for (let i = 0; i < flames.length; i++) {
-      const fl = flames[i];
-      fl.scale.y = 0.6 + 0.6 * Math.abs(Math.sin(t * 18 + i));
-      fl.material.opacity = (0.45 + 0.4 * intensity) * (0.55 + 0.45 * Math.sin(t * 22 + i * 1.7));
+    shell.material.opacity = (0.14 + 0.22 * intensity) * (0.5 + 0.5 * pulse);
+    shell.scale.setScalar(1 + 0.06 * pulse);
+    if (flick > 0.06) { flick = 0; ft.redraw(intensity); }
+    for (const f of flames) {
+      f.m.scale.y = 0.55 + 0.7 * Math.abs(Math.sin(t * (f.sp * 0.06) + f.ph));
+      f.m.material.opacity = (0.4 + 0.45 * intensity) * f.hi * (0.5 + 0.5 * Math.sin(t * (f.sp * 0.08) + f.ph * 1.7));
     }
-    group.rotation.y += dt * 1.6;
+    for (const e of embers) {
+      e.userData.t += dt;
+      e.position.y += e.userData.vy * dt;
+      e.position.x += Math.sin(t * 3 + e.position.z) * dt * 0.3;
+      const k = e.userData.t / e.userData.life;
+      e.material.opacity = Math.max(0, 0.9 * (1 - k)) * intensity;
+      e.scale.setScalar(Math.max(0.2, 1 - k * 0.7));
+      if (k >= 1) e.userData.reset();
+    }
+    curtain.material.opacity = 0.35 + 0.45 * intensity;
+    group.rotation.y += dt * 1.2;
   }
 
   group.visible = false;

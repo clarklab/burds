@@ -181,3 +181,10 @@ splashes, for tuning the poop art:
 ```bash
 node test/poopshapes.mjs   # writes test/shot-poopshapes.png
 ```
+
+…and a side-by-side of the two power-up auras (super-Saiyan lightning + TURD
+FIRE) for tuning the VFX:
+
+```bash
+node test/auras.mjs        # writes test/shot-auras.png
+```

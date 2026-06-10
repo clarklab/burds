@@ -1130,7 +1130,9 @@ class Game {
     const machineGun = this.weaponMode === 'machinegun';
     if (!locked) {
       if (machineGun) {
-        // hold to rapid-fire ~3/sec; no charge, no bullet time, release to stop
+        // hold to rapid-fire ~3/sec; no charge, no bullet time, release to stop.
+        // Each pellet pulls the next shape from the cycle (firePoop → _nextPoopType),
+        // so a burst sprays all four turd shapes in rotation.
         if (this.input.charging) {
           this._mgCooldown -= dtReal;
           if (this._mgCooldown <= 0) { this.firePoop(MG_POWER, { bt: false, silent: true }); this._mgCooldown = 1 / MG_RATE; }

@@ -1,0 +1,52 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>html,body{margin:0;background:#0b1020;overflow:hidden}</style>
+<script type="importmap">{ "imports": { "three": "../vendor/three.module.js" } }</script>
+</head>
+<body>
+<script type="module">
+import * as THREE from 'three';
+import { buildSuperAura, buildFireAura } from '../src/effects.js';
+
+const W = 1100, H = 620;
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(W, H);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0b1020);
+const cam = new THREE.PerspectiveCamera(45, W / H, 0.1, 200);
+cam.position.set(0, 3, 16);
+cam.lookAt(0, 1.5, 0);
+scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+const d = new THREE.DirectionalLight(0xffffff, 0.6); d.position.set(4, 8, 6); scene.add(d);
+
+function bird(x) {
+  const b = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.8, 12, 12), new THREE.MeshLambertMaterial({ color: 0xf2f2f5 }));
+  b.add(body);
+  b.position.set(x, 1.5, 0);
+  scene.add(b);
+  return b;
+}
+
+const superBird = bird(-4.5);
+const fireBird = bird(4.5);
+const sa = buildSuperAura(); sa.group.visible = true; superBird.add(sa.group);
+const fa = buildFireAura(); fa.group.visible = true; fireBird.add(fa.group);
+
+let frames = 0;
+function tick() {
+  sa.update(1 / 60, 1);
+  fa.update(1 / 60, 1);
+  renderer.render(scene, cam);
+  frames++;
+  if (frames < 40) requestAnimationFrame(tick);
+  else window.__done = true;
+}
+tick();
+</script>
+</body>
+</html>
