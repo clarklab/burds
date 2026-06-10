@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { TargetManager, COURSE_HALF } from './world.js';
-import { buildSeagull, buildPoop, buildFireball } from './models.js';
+import { buildSeagull, buildPoop, buildFireball, POOP_TYPES } from './models.js';
 import { Input } from './input.js';
 import { Audio } from './audio.js';
 import { Effects, buildReticle, buildBirdShadow, buildSuperAura, buildFireAura } from './effects.js';
@@ -199,6 +199,9 @@ class Game {
     // btPoop is the single one that owns bullet-time framing, when eligible.
     this.poops = [];
     this.btPoop = null;
+    // which turd shape drops next — cycles through POOP_TYPES so a different
+    // one (swirl → log → BBs → splatter) falls on each shot.
+    this._poopCycle = 0;
 
     // time / bullet-time
     this.timeScale = 1;
@@ -704,12 +707,22 @@ class Game {
   //               offset (scatter spray); flight time stays the same, so the
   //               horizontal velocity absorbs the whole shift analytically
   //   silent    — skip the per-shot whoosh (volleys/auto-fire play one cue)
+  // Advance and return the next turd shape in the rotation.
+  _nextPoopType() {
+    const t = POOP_TYPES[this._poopCycle % POOP_TYPES.length];
+    this._poopCycle++;
+    return t;
+  }
+
   firePoop(power, opts = {}) {
     const { bt = false, yawOffset = 0, pitchOffset = 0, sizeMul = 1, silent = false, offset = null } = opts;
     const p0 = this.pos.clone().add(new THREE.Vector3(0, -0.8, 0));
     const v0 = this._launchVel(yawOffset, pitchOffset);
     const fire = this.weaponMode === 'fire';
-    const group = fire ? buildFireball() : buildPoop();
+    // Pick the next turd shape in the cycle (callers can pin one via opts.poopType
+    // so a whole scatter volley shares a single shape). Fireballs ignore it.
+    const poopType = fire ? 'fire' : (opts.poopType || this._nextPoopType());
+    const group = fire ? buildFireball() : buildPoop(poopType);
     const turdScale = this._turdScale(power) * sizeMul;
     const catchR = this._turdCatch(power) * sizeMul;
     const blast = this._turdBlast(power) * sizeMul;
@@ -739,7 +752,7 @@ class Game {
         }
       }
     }
-    const p = { group, p0: p0.clone(), v0: v0.clone(), t: 0, pos: p0.clone(), vel: v0.clone(), prevY: p0.y, landing, btTarget, tImpact, tFall, seq, maxShot, power, turdScale, catch: catchR, blast, fire, bt, spin: 0 };
+    const p = { group, p0: p0.clone(), v0: v0.clone(), t: 0, pos: p0.clone(), vel: v0.clone(), prevY: p0.y, landing, btTarget, tImpact, tFall, seq, maxShot, power, turdScale, catch: catchR, blast, fire, poopType, bt, spin: 0 };
     this.poops.push(p);
     this.audio.poop();
     if (!silent) this.audio.whoosh();
@@ -764,6 +777,7 @@ class Game {
   _fireScatter(power) {
     const GOLDEN = 2.39996; // golden angle (rad)
     const fwdX = Math.sin(this.yaw), fwdZ = Math.cos(this.yaw);
+    const poopType = this._nextPoopType(); // one shape for the whole volley
     for (let i = 0; i < SCATTER_COUNT; i++) {
       const r = SCATTER_RADIUS * Math.sqrt((i + 0.5) / SCATTER_COUNT) * (0.85 + Math.random() * 0.3);
       const a = i * GOLDEN + Math.random() * 0.6;
@@ -773,6 +787,7 @@ class Game {
         bt: false,
         sizeMul: SCATTER_SIZE,
         silent: i > 0,
+        poopType,
         offset: { dx: fwdX * along + fwdZ * across, dz: fwdZ * along - fwdX * across },
       });
     }
@@ -785,10 +800,11 @@ class Game {
     const where = impact || p.pos;
     const bestAcc = hits.length ? Math.max(...hits.map((h) => h.acc)) : 0;
     const big = bestAcc >= BULLSEYE_ACC;
-    // flat ground splat (lava-coloured for fireballs)...
-    this.effects.splat(where, big, p.turdScale, p.fire);
+    // flat ground splat (lava-coloured for fireballs; each turd shape lands with
+    // its own signature burst — see effects.splat)...
+    this.effects.splat(where, big, p.turdScale, p.fire, p.poopType);
     // ...plus one splash scaled up by how many got caught.
-    if (hits.length) this.effects.splash(where, p.turdScale * Math.min(2.4, 0.85 + 0.28 * hits.length), p.fire);
+    if (hits.length) this.effects.splash(where, p.turdScale * Math.min(2.4, 0.85 + 0.28 * hits.length), p.fire, p.poopType);
     this.scene.remove(p.group);
 
     if (hits.length) {
@@ -807,7 +823,7 @@ class Game {
         const comboMult = 1 + (this.combo - 1) * 0.5;
         gain += Math.round(base * comboMult * this._superScoreMult());
         // splatter gunk all over the victim — it rides their death tumble
-        this.effects.stickTo(h.tg.group, h === hits[0] ? 6 : 3, p.fire);
+        this.effects.stickTo(h.tg.group, h === hits[0] ? 6 : 3, p.fire, p.poopType);
         this.targets.kill(h.tg);
         if (h.tg.special === 'super') superHit = true;
       }
@@ -1114,7 +1130,9 @@ class Game {
     const machineGun = this.weaponMode === 'machinegun';
     if (!locked) {
       if (machineGun) {
-        // hold to rapid-fire ~3/sec; no charge, no bullet time, release to stop
+        // hold to rapid-fire ~3/sec; no charge, no bullet time, release to stop.
+        // Each pellet pulls the next shape from the cycle (firePoop → _nextPoopType),
+        // so a burst sprays all four turd shapes in rotation.
         if (this.input.charging) {
           this._mgCooldown -= dtReal;
           if (this._mgCooldown <= 0) { this.firePoop(MG_POWER, { bt: false, silent: true }); this._mgCooldown = 1 / MG_RATE; }
@@ -1363,6 +1381,10 @@ class Game {
       // keep the comet upright (tail trailing up) and lay down a lava trail
       p.group.rotation.set(0, p.spin, 0);
       this.effects.ember(p.pos, p.turdScale);
+    } else if (p.poopType === 'splatter') {
+      // the lightning-bolt splatter stabs straight down — stay upright, just
+      // wobble-spin around the vertical so the zig-zag streaks as it falls
+      p.group.rotation.set(0, p.spin * 1.6, Math.sin(p.t * 14) * 0.12);
     } else {
       p.group.rotation.x = p.spin;
       p.group.rotation.z = p.spin * 0.7;

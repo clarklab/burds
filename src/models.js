@@ -923,8 +923,18 @@ export function buildSuperTurd() {
   return g;
 }
 
-// A poop projectile mesh.
-export function buildPoop() {
+// ---------------------------------------------------------------------------
+// POOP PROJECTILES. Four interchangeable turd shapes that all fly the SAME
+// physics arc — buildPoop(type) just swaps the mesh, and main.js cycles the
+// type on every drop so a different one falls each time. Each variant also
+// carries a `splatStyle` tag (read by effects.js) so its ground/target impact
+// looks unique. Browns are shared; the splatter mixes in seabird white.
+// ---------------------------------------------------------------------------
+const TURD_BROWN = [0x7a5230, 0x6b4626, 0x5e3c1f];
+const TURD_WHITE = [0xf2ede0, 0xe6dcc6];
+
+// 1) The classic 💩 swirl — the original coil that tapers to a curl.
+function buildPoopNormal() {
   const g = new THREE.Group();
   const s1 = sphere(0.42, 0x7a5230, 7); s1.position.y = -0.1; s1.scale.set(1.2, 0.7, 1.2);
   const s2 = sphere(0.32, 0x6b4626, 7); s2.position.y = 0.18; s2.scale.set(1, 0.75, 1);
@@ -932,6 +942,90 @@ export function buildPoop() {
   const tip = cone(0.12, 0.3, 0x5e3c1f, 6); tip.position.y = 0.68;
   g.add(s1, s2, s3, tip);
   g.userData.spinnable = [s1, s2, s3, tip];
+  return g;
+}
+
+// 2) The "turd log" — a long, gently arced, segmented Mr. Hanky sausage that
+// tapers to a point at each end, built along a shallow banana curve so it reads
+// as a log however it tumbles.
+function buildPoopLog() {
+  const g = new THREE.Group();
+  const parts = [];
+  const N = 7, len = 1.5;
+  for (let i = 0; i < N; i++) {
+    const f = i / (N - 1);                 // 0..1 along the log
+    const taper = Math.sin(f * Math.PI);   // fat in the middle, slim at the ends
+    const s = sphere(0.1 + taper * 0.19, TURD_BROWN[i % 3], 7);
+    s.position.set((f - 0.5) * len, taper * 0.16, 0); // gentle upward arc
+    s.scale.set(1.05, 0.9, 0.95);
+    g.add(s); parts.push(s);
+  }
+  // pointed tips poking straight out of each end
+  const tipR = cone(0.1, 0.34, 0x5e3c1f, 6); tipR.position.x = len / 2; tipR.rotation.z = -Math.PI / 2;
+  const tipL = cone(0.1, 0.34, 0x5e3c1f, 6); tipL.position.x = -len / 2; tipL.rotation.z = Math.PI / 2;
+  g.add(tipR, tipL); parts.push(tipR, tipL);
+  g.userData.spinnable = parts;
+  return g;
+}
+
+// 3) The "BBs" — a tight clump of little pellets bunched into one clammy group,
+// laid out on a golden-angle spiral so they pack evenly with no seams.
+function buildPoopBBs() {
+  const g = new THREE.Group();
+  const parts = [];
+  const N = 11;
+  for (let i = 0; i < N; i++) {
+    const a = i * 2.39996;                            // golden angle
+    const rad = 0.04 + 0.27 * Math.sqrt(i / N);
+    const s = sphere(0.12 + Math.random() * 0.05, TURD_BROWN[i % 3], 6);
+    s.position.set(Math.cos(a) * rad, (Math.random() - 0.5) * 0.4, Math.sin(a) * rad);
+    g.add(s); parts.push(s);
+  }
+  g.userData.spinnable = parts;
+  return g;
+}
+
+// 4) The "splatter" — a white-and-brown liquidy mess shaped like a jagged
+// lightning bolt that stabs straight down. Held upright in flight (see
+// _updatePoop) so the zig-zag reads vertically as it streaks at the ground.
+function buildPoopSplatter() {
+  const g = new THREE.Group();
+  const parts = [];
+  // a zig-zagging column of wet blobs from a fat head down to a sharp drip
+  const steps = [
+    [0.00, 0.60, 0.25, TURD_WHITE[0]],
+    [0.11, 0.38, 0.22, TURD_BROWN[0]],
+    [-0.13, 0.16, 0.20, TURD_WHITE[1]],
+    [0.11, -0.05, 0.16, TURD_BROWN[1]],
+    [-0.08, -0.27, 0.13, TURD_WHITE[0]],
+    [0.05, -0.46, 0.10, TURD_BROWN[2]],
+  ];
+  for (const [x, y, r, col] of steps) {
+    const s = sphere(r, col, 7); s.position.set(x, y, 0); s.scale.set(1.1, 0.95, 1.1);
+    g.add(s); parts.push(s);
+  }
+  const tip = cone(0.1, 0.42, TURD_BROWN[2], 6); // the bolt's dripping point
+  tip.position.set(0.05, -0.74, 0); tip.rotation.z = Math.PI;
+  g.add(tip); parts.push(tip);
+  // a couple of flung side droplets to sell the wet splat
+  for (const sx of [-1, 1]) {
+    const d = sphere(0.09, sx < 0 ? TURD_WHITE[0] : TURD_BROWN[0], 6);
+    d.position.set(sx * 0.27, 0.1 + sx * 0.1, 0.05);
+    g.add(d); parts.push(d);
+  }
+  g.userData.spinnable = parts;
+  return g;
+}
+
+// The four turd variants, in cycle order. `splatStyle` is read by effects.js to
+// pick the matching impact burst; `upright` keeps the bolt pointing down.
+export const POOP_TYPES = ['normal', 'log', 'bbs', 'splatter'];
+const POOP_BUILDERS = { normal: buildPoopNormal, log: buildPoopLog, bbs: buildPoopBBs, splatter: buildPoopSplatter };
+
+// A poop projectile mesh of the given variant (defaults to the classic swirl).
+export function buildPoop(type = 'normal') {
+  const g = (POOP_BUILDERS[type] || buildPoopNormal)();
+  g.userData.poopType = type;
   freeze(g); // the whole group tumbles; the blobs are static within it
   return g;
 }

@@ -9,7 +9,7 @@
  *   activate, takes control, and the page reloads onto the new build.
  *   That's the whole "push changes when the user regains internet" story.
  */
-const CACHE_VERSION = 'v21';
+const CACHE_VERSION = 'v24';
 const CACHE_NAME = `burds-${CACHE_VERSION}`;
 
 // Everything needed to boot and play with zero network.
@@ -38,6 +38,7 @@ const ASSETS = [
   './audio/amb-wedding.mp3',
   './audio/amb-murmur.mp3',
   './audio/amb-concert.mp3',
+  './audio/rock.m4a',
   './audio/gull1.mp3',
   './audio/gull2.mp3',
   './audio/react1.mp3',
