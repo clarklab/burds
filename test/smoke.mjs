@@ -4,7 +4,7 @@ import { readFile } from 'fs/promises';
 import { extname, join, normalize } from 'path';
 
 const ROOT = new URL('..', import.meta.url).pathname;
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.json': 'application/json', '.webmanifest': 'application/manifest+json' };
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.mp3': 'audio/mpeg' };
 
 // In-memory stand-in for the Netlify leaderboard function (Netlify Blobs isn't
 // available in the test harness), so the client's network path is exercised.
@@ -94,6 +94,24 @@ for (let i = 0; i < 3; i++) {
 let score = await page.textContent('#scoreValue');
 console.log('score after random poops:', score);
 
+// --- sound design: samples decode and the level ambience is looping ---
+const snd = await page.evaluate(async () => {
+  const g = window.game;
+  for (let i = 0; i < 160; i++) {
+    if (Object.keys(g.audio.buffers).length >= 10 && g.audio._ambNodes.length >= 1) break;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return {
+    decoded: Object.keys(g.audio.buffers).length,
+    ambLayers: g.audio._ambNodes.map((n) => n.key),
+    ambLevel: g.audio._ambLevel,
+  };
+});
+console.log('SOUND TEST:', JSON.stringify(snd));
+if (!(snd.decoded >= 10 && snd.ambLayers.length >= 1 && snd.ambLevel === 'beach')) {
+  throw new Error('ambience/samples did not load: ' + JSON.stringify(snd));
+}
+
 // --- deterministic hit test: drop a target right where a tap would land, fire ---
 const hit = await page.evaluate(async () => {
   const g = window.game;
@@ -181,11 +199,31 @@ const sup = await page.evaluate(async () => {
   g.firePoop(1, { bt: true });
   out.poopIsFire = !!(g.poops[0] && g.poops[0].fire);
   out.timerWasAdded = out.timerAfterStack > t1;
+  // timer stack cap: the 4th super turd still banks time, the 5th+ must NOT
+  // (points multiplier keeps climbing, but the mode has to run out eventually)
+  const t4 = g.superTimer;
+  g._hitSuperTurd();                       // stack 4
+  out.stack4 = g.superStack;
+  out.stack4AddedTime = g.superTimer > t4;
+  const t5 = g.superTimer;
+  g._hitSuperTurd();                       // stack 5
+  g._hitSuperTurd();                       // stack 6
+  out.stack5PlusAddedTime = g.superTimer > t5; // should stay false
+  out.mult6 = g._superScoreMult();
   // scatter fires a whole grid of pellets at once (2/3/3/2 = 10)
   for (const pp of g.poops) g.scene.remove(pp.group); g.poops = [];
   g.weaponMode = 'scatter';
   g._fireScatter(0.5);
   out.scatterCount = g.poops.length;
+  // the volley must land as one round cluster: every pellet within the spray
+  // disc of the volley's centroid (rows/columns would also pass, but a stray
+  // mis-solved velocity would not)
+  {
+    const lx = g.poops.map((pp) => pp.landing.x), lz = g.poops.map((pp) => pp.landing.z);
+    const cx = lx.reduce((a, b) => a + b, 0) / lx.length;
+    const cz = lz.reduce((a, b) => a + b, 0) / lz.length;
+    out.scatterSpread = +Math.max(...g.poops.map((pp) => Math.hypot(pp.landing.x - cx, pp.landing.z - cz))).toFixed(1);
+  }
   // clean up so the rest of the run starts from a normal state
   for (const pp of g.poops) g.scene.remove(pp.group); g.poops = [];
   g._endSuper();
@@ -211,7 +249,13 @@ if (!(sup.weaponMode === 'fire' && sup.fireAura && sup.badgeFire && sup.poopIsFi
   throw new Error('Choosing FIRE did not apply fire mode + bonus: ' + JSON.stringify(sup));
 }
 if (sup.scatterCount !== 10) {
-  throw new Error('Scatter did not fire a 10-pellet grid volley: ' + JSON.stringify(sup));
+  throw new Error('Scatter did not fire a 10-pellet volley: ' + JSON.stringify(sup));
+}
+if (!(sup.scatterSpread > 2 && sup.scatterSpread < 12)) {
+  throw new Error('Scatter spray is not a tight circle: ' + JSON.stringify(sup));
+}
+if (!(sup.stack4 === 4 && sup.stack4AddedTime && !sup.stack5PlusAddedTime && sup.mult6 > sup.mult3)) {
+  throw new Error('Super timer did not cap after the 4th stack: ' + JSON.stringify(sup));
 }
 
 // --- charging finger can steer: hold the poop button and drag, and steerX
@@ -304,7 +348,7 @@ console.log('LEADERBOARD TEST:', JSON.stringify(lb));
 if (!lb.optimistic || !lb.optimistic.includes('TESTGULL')) {
   throw new Error('leaderboard did not reflect locally on submit: ' + JSON.stringify(lb));
 }
-if (!lb.me || !lb.me.includes('TESTGULL') || !lb.me.includes('4242')) {
+if (!lb.me || !lb.me.includes('TESTGULL') || !lb.me.includes('4,242')) {
   throw new Error('leaderboard submit/sync failed: ' + JSON.stringify(lb));
 }
 

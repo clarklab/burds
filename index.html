@@ -104,7 +104,7 @@
       </div>
       <div class="level-pick" id="levelPick"></div>
       <div class="how-to" id="howTo"></div>
-      <button id="playBtn" class="big-btn">PLAY</button>
+      <button id="playBtn" class="big-btn" disabled>LOADING…</button>
       <p class="best-line">Best: <span id="menuBest">0</span></p>
       <div class="board" id="menuBoard">
         <div class="board-title" id="menuBoardTitle"><svg class="ic title-ic" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M7 4h10v3.5a5 5 0 0 1-10 0z"/><path d="M7 5.2H4v1.3A3.5 3.5 0 0 0 7.5 10"/><path d="M17 5.2h3v1.3A3.5 3.5 0 0 1 16.5 10"/><line x1="12" y1="12.5" x2="12" y2="16.5"/><path d="M8.3 20.5a3.7 3.7 0 0 1 7.4 0z"/></svg><span>Global Top</span></div>
@@ -116,13 +116,18 @@
   <!-- Game over screen -->
   <div id="gameover" class="overlay hidden">
     <div class="overlay-card">
-      <h1 class="title small" id="goTitle">TIME'S UP!</h1>
+      <h1 class="go-title" id="goTitle">TIME'S UP!</h1>
       <div class="final-score" id="finalScore">0</div>
       <p class="final-label">points</p>
+      <div class="best-chip" id="goBestChip">
+        <svg class="ic title-ic" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M7 4h10v3.5a5 5 0 0 1-10 0z"/><path d="M7 5.2H4v1.3A3.5 3.5 0 0 0 7.5 10"/><path d="M17 5.2h3v1.3A3.5 3.5 0 0 1 16.5 10"/><line x1="12" y1="12.5" x2="12" y2="16.5"/><path d="M8.3 20.5a3.7 3.7 0 0 1 7.4 0z"/></svg>
+        <span class="bc-label" id="goBestLabel">BEST</span>
+        <b id="goBest">0</b>
+      </div>
       <div class="go-stats">
         <div class="go-stat"><span id="goHits">0</span><label>splats</label></div>
-        <div class="go-stat"><span id="goBest">0</span><label>best</label></div>
         <div class="go-stat"><span id="goBullseyes">0</span><label>bullseyes</label></div>
+        <div class="go-stat"><span id="goCombo">0</span><label>top combo</label></div>
       </div>
       <p class="go-blurb" id="goBlurb"></p>
       <div class="board" id="goBoard">
@@ -135,13 +140,6 @@
       </div>
       <button id="againBtn" class="big-btn">PLAY AGAIN</button>
       <button id="menuBtn" class="ghost-btn"><svg class="ic btn-ic" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><line x1="20" y1="12" x2="5" y2="12"/><path d="M11 6l-6 6 6 6"/></svg><span>PICK A LEVEL</span></button>
-    </div>
-  </div>
-
-  <div id="loading" class="overlay">
-    <div class="overlay-card">
-      <img class="logo logo-bob" src="./logo.webp" width="900" height="483" alt="BURDS — a game about bird turds" />
-      <p class="subtitle subtitle-loading">loading the flock…</p>
     </div>
   </div>
 
@@ -181,10 +179,20 @@
           // focus/online), so a fresh deploy is picked up promptly.
           reg.update().catch(() => {});
 
-          // When the new worker takes control, reload once onto the new build.
+          // When a new worker takes control, get onto the new build — with
+          // two guards that used to cause phantom reloads:
+          //  * first install: claim() fires controllerchange on the very first
+          //    visit, but those assets just came from the network — reloading
+          //    only flashed the intro twice. Skip it.
+          //  * mid-game: never yank a live round (or the game-over screen)
+          //    out from under the player; defer until the menu is next shown
+          //    (main.js checks __swReloadPending there).
+          const hadController = !!navigator.serviceWorker.controller;
           let reloaded = false;
           navigator.serviceWorker.addEventListener('controllerchange', () => {
-            if (reloaded) return;
+            if (reloaded || !hadController) return;
+            const st = window.game && window.game.state;
+            if (st === 'playing' || st === 'gameover') { window.__swReloadPending = true; return; }
             reloaded = true;
             window.location.reload();
           });

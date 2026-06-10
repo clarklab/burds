@@ -645,9 +645,10 @@ export function buildConcertWorld(scene, renderer) {
   const root = new THREE.Group();
   scene.add(root);
 
-  const hemi = new THREE.HemisphereLight(0x4a4470, 0x101018, 0.95);
+  // Brighter, purple-washed base light so the crowd reads clearly at night.
+  const hemi = new THREE.HemisphereLight(0x6a5fa8, 0x221c38, 1.35);
   root.add(hemi);
-  const key = new THREE.DirectionalLight(0xa6b6ff, 1.1);
+  const key = new THREE.DirectionalLight(0xb4c0ff, 1.35);
   key.position.set(20, 90, 60);
   key.castShadow = true;
   key.shadow.mapSize.set(1024, 1024);
@@ -657,9 +658,11 @@ export function buildConcertWorld(scene, renderer) {
   key.shadow.camera.far = 360;
   key.shadow.bias = -0.0004;
   root.add(key);
-  // A couple of colored point lights wash the stage for concert mood.
-  const stageLight1 = new THREE.PointLight(0xff3b6b, 1.25, 160); stageLight1.position.set(-16, 18, -46); root.add(stageLight1);
-  const stageLight2 = new THREE.PointLight(0x3bdcff, 1.25, 160); stageLight2.position.set(16, 18, -46); root.add(stageLight2);
+  // Colored point lights: pink/cyan washing the stage, and a big slow-pulsing
+  // purple wash hanging over the pit so the whole crowd catches concert color.
+  const stageLight1 = new THREE.PointLight(0xff3b6b, 1.4, 160); stageLight1.position.set(-16, 18, -46); root.add(stageLight1);
+  const stageLight2 = new THREE.PointLight(0x3bdcff, 1.4, 160); stageLight2.position.set(16, 18, -46); root.add(stageLight2);
+  const pitWash = new THREE.PointLight(0x8a5bff, 1.5, 150); pitWash.position.set(0, 26, -6); root.add(pitWash);
 
   const sky = gradientSky(0x0a0a14, 0x241f3a);
   root.add(sky);
@@ -688,12 +691,13 @@ export function buildConcertWorld(scene, renderer) {
     sky.add(moon);
   }
 
-  // Dark venue floor.
-  const floor = new THREE.Mesh(new THREE.CircleGeometry(WORLD_RADIUS + 40, 48), mat(0x1c1a26));
+  // Venue floor — lifted a few stops so the colored washes have something to
+  // land on instead of disappearing into black.
+  const floor = new THREE.Mesh(new THREE.CircleGeometry(WORLD_RADIUS + 40, 48), mat(0x262236));
   floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true;
   root.add(floor);
   // Lit pit area between the barriers.
-  const pit = new THREE.Mesh(new THREE.PlaneGeometry(30, 120), mat(0x2a2740));
+  const pit = new THREE.Mesh(new THREE.PlaneGeometry(30, 120), mat(0x383158));
   pit.rotation.x = -Math.PI / 2; pit.position.set(0, 0.04, 0);
   root.add(pit);
 
@@ -717,16 +721,51 @@ export function buildConcertWorld(scene, renderer) {
   // Volumetric-look spotlight beams sweeping from the truss over the crowd.
   const beams = [];
   const BEAM_COLORS = [0xff3b6b, 0x3bdcff, 0xffe24a, 0x8a5bff];
+  const beamMat = (color, opacity) => new THREE.MeshBasicMaterial({
+    color, transparent: true, opacity,
+    blending: THREE.AdditiveBlending, side: THREE.DoubleSide, depthWrite: false, fog: false,
+  });
   for (let i = 0; i < 4; i++) {
     const bgeo = new THREE.ConeGeometry(4.2, 36, 12, 1, true);
     bgeo.translate(0, -18, 0); // pivot at the apex (the lamp)
-    const beam = new THREE.Mesh(bgeo, new THREE.MeshBasicMaterial({
-      color: BEAM_COLORS[i], transparent: true, opacity: 0.09,
-      blending: THREE.AdditiveBlending, side: THREE.DoubleSide, depthWrite: false, fog: false,
-    }));
+    const beam = new THREE.Mesh(bgeo, beamMat(BEAM_COLORS[i], 0.09));
     beam.position.set(-12 + i * 8, 9.0, -61.5);
     root.add(beam);
     beams.push(beam);
+  }
+
+  // Moving heads: spinning spotlight rigs on towers beside the stage and
+  // along the pit — each cone holds a fixed tilt and revolves, raking circles
+  // of purple/magenta/blue across the crowd, with a glow sprite at the lamp.
+  const headGlowTex = glowTexture();
+  const spinners = [];
+  const SPIN_RIGS = [
+    { x: -17, z: -45, c: 0xb05bff, speed: 1.3, tilt: -0.55, phase: 0 },
+    { x: 17,  z: -45, c: 0xff3bd4, speed: -1.1, tilt: -0.62, phase: 2.1 },
+    { x: -15, z: -8,  c: 0x8a5bff, speed: 1.0, tilt: -0.5,  phase: 4.2 },
+    { x: 15,  z: 6,   c: 0x3b8aff, speed: -1.4, tilt: -0.55, phase: 1.3 },
+  ];
+  for (const rig of SPIN_RIGS) {
+    const tower = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.2, 7, 8), mat(0x32323c));
+    tower.position.set(rig.x, 3.5, rig.z);
+    root.add(tower);
+    const head = new THREE.Group();
+    head.position.set(rig.x, 7.1, rig.z);
+    const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.34, 10, 10), new THREE.MeshBasicMaterial({ color: rig.c, fog: false }));
+    head.add(lamp);
+    const glow = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: headGlowTex, color: rig.c, transparent: true, opacity: 0.85,
+      blending: THREE.AdditiveBlending, depthWrite: false, fog: false,
+    }));
+    glow.scale.set(4.5, 4.5, 1);
+    head.add(glow);
+    const bgeo = new THREE.ConeGeometry(3.4, 30, 12, 1, true);
+    bgeo.translate(0, -15, 0);
+    const beam = new THREE.Mesh(bgeo, beamMat(rig.c, 0.12));
+    beam.rotation.x = rig.tilt;
+    head.add(beam);
+    root.add(head);
+    spinners.push({ head, speed: rig.speed, phase: rig.phase });
   }
 
   // An EQ wall: neon bars dancing on the backdrop behind the band.
@@ -762,6 +801,12 @@ export function buildConcertWorld(scene, renderer) {
         beams[i].rotation.z = Math.sin(t * 1.1 + i * 0.9) * 0.45;
         beams[i].material.opacity = 0.07 + 0.04 * (0.5 + 0.5 * Math.sin(t * 5 + i * 2.1));
       }
+      // moving heads revolve, sweeping circles of color over the crowd
+      for (const sp of spinners) {
+        sp.head.rotation.y = t * sp.speed + sp.phase;
+      }
+      // the purple pit wash breathes with the music
+      pitWash.intensity = 1.2 + Math.sin(t * 2.4) * 0.5;
       // EQ wall bounces to an imaginary beat
       for (let i = 0; i < eqBars.length; i++) {
         const k = 0.5 + 0.5 * Math.sin(t * 7 + i * 0.9) * Math.sin(t * 2.6 + i * 2.2);

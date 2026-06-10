@@ -11,6 +11,9 @@ import { iconSvg } from './icons.js';
 // Icon name for each tier-3 weapon mode (badge + toast + picker).
 const MODE_ICON = { fire: 'fire', scatter: 'scatter', machinegun: 'machinegun' };
 
+// Scores render with comma grouping (1,000 / 467,286) everywhere.
+const fmtN = (n) => Math.round(n).toLocaleString('en-US');
+
 // Render a few flap frames of the actual seagull to transparent PNG sprites,
 // used for the two birds that orbit the menu logo. One-off, on a throwaway
 // renderer; returns [] (and the birds are simply skipped) if WebGL/readback
@@ -86,12 +89,13 @@ const TURD_FOOTPRINT = 0.7;  // extra catch radius per unit of turd scale over 1
 // ----- tier-3 weapon modes (picked from a slow-mo menu on the 3rd stack) -----
 const MODE_BONUS_TIME = 20;  // seconds added to the super window when you pick a mode
 const PICKER_SCALE = 0.06;   // time slows almost to a stop while the picker is open
-// Scatter throws a circular grid of pellets so the volley blankets a square-ish
-// patch of ground instead of a single line. Rows of 2/3/3/2 approximate a
-// circle (10 pellets total); columns fan sideways (yaw), rows fan in depth (pitch).
-const SCATTER_ROWS = [2, 3, 3, 2]; // pellets per depth row — a round-ish cluster
-const SCATTER_SPREAD = 0.62; // sideways fan angle (radians) across the widest row
-const SCATTER_PITCH = 0.22;  // pitch fan (radians) front-to-back, spreads the depth
+// Scatter sprays a filled circle of pellets around the aim point. Pellets
+// sample a sunflower (golden-angle) disc with jitter — an even, organic round
+// blast with no rows or columns — and each pellet's launch velocity is solved
+// so it lands exactly on its sampled spot.
+const SCATTER_COUNT = 10;    // pellets per volley
+const SCATTER_RADIUS = 6.5;  // radius of the landing circle (m)
+const SCATTER_STRETCH = 1.3; // slight elongation along the flight line (spray feel)
 const SCATTER_SIZE = 0.62;   // pellets are smaller than a normal turd
 const MG_RATE = 3;           // machine-gun turds per second
 const MG_POWER = 0.42;       // fixed hold-power for machine-gun turds
@@ -172,6 +176,7 @@ class Game {
     this.targets = new TargetManager(this.scene);
     this.effects = new Effects(this.scene);
     this.audio = new Audio();
+    this.audio.preload(); // fetch samples while the menu is up
     this.input = new Input(this.canvas, document.getElementById('poopBtn'));
 
     // flight state — the bird always runs forward (-Z); steering strafes it
@@ -215,6 +220,7 @@ class Game {
     this.state = 'menu';
     this.score = 0;
     this.combo = 0;
+    this.maxCombo = 0;
     this.hits = 0;
     this.bullseyes = 0;
     this.timeLeft = ROUND_TIME;
@@ -232,7 +238,6 @@ class Game {
       hud: document.getElementById('hud'),
       menu: document.getElementById('menu'),
       gameover: document.getElementById('gameover'),
-      loading: document.getElementById('loading'),
       score: document.getElementById('scoreValue'),
       timer: document.getElementById('timerValue'),
       timerPill: document.getElementById('timerPill'),
@@ -251,7 +256,10 @@ class Game {
       finalScore: document.getElementById('finalScore'),
       goHits: document.getElementById('goHits'),
       goBest: document.getElementById('goBest'),
+      goBestChip: document.getElementById('goBestChip'),
+      goBestLabel: document.getElementById('goBestLabel'),
       goBullseyes: document.getElementById('goBullseyes'),
+      goCombo: document.getElementById('goCombo'),
       goBlurb: document.getElementById('goBlurb'),
       menuBest: document.getElementById('menuBest'),
       levelPick: document.getElementById('levelPick'),
@@ -265,7 +273,7 @@ class Game {
       nameInput: document.getElementById('nameInput'),
       submitScoreBtn: document.getElementById('submitScoreBtn'),
     };
-    this.dom.menuBest.textContent = this.best;
+    this.dom.menuBest.textContent = fmtN(this.best);
     this._initLevelPicker();
 
     // leaderboard state
@@ -280,7 +288,11 @@ class Game {
     this._resize();
     window.addEventListener('resize', () => this._resize());
 
-    this.dom.loading.classList.add('hidden');
+    // The menu doubles as the loading screen — everything above is built, so
+    // arm the PLAY button (it ships disabled as "LOADING…" in the HTML).
+    const playBtn = document.getElementById('playBtn');
+    playBtn.disabled = false;
+    playBtn.textContent = 'PLAY';
 
     this.clock = new THREE.Clock();
     this.renderer.setAnimationLoop(() => this._frame());
@@ -303,13 +315,15 @@ class Game {
   // Return from the game-over screen to the menu so a different level can be
   // picked. The last-played venue stays as the backdrop.
   _showMenu() {
+    // a new build installed mid-game? now that no round is live, hop onto it
+    if (window.__swReloadPending) { window.location.reload(); return; }
     this.state = 'menu';
     this.input.setEnabled(false);
     this._camLookAt = null;
     this.dom.gameover.classList.add('hidden');
     this.dom.hud.classList.add('hidden');
     this.dom.menu.classList.remove('hidden');
-    this.dom.menuBest.textContent = this.bests[this.levelId];
+    this.dom.menuBest.textContent = fmtN(this.bests[this.levelId]);
     this._renderMenuBoard();
   }
 
@@ -364,7 +378,7 @@ class Game {
     if (this.dom.levelPick) {
       for (const c of this.dom.levelPick.children) c.classList.toggle('selected', c.dataset.level === id);
     }
-    this.dom.menuBest.textContent = this.best;
+    this.dom.menuBest.textContent = fmtN(this.best);
     if (this.dom.menuBoardTitle) this.dom.menuBoardTitle.innerHTML = iconSvg('trophy', { size: 15, cls: 'title-ic' }) + `<span>${this.level.name} Top</span>`;
     this._renderHowTo();
     // swap the menu backdrop world to the chosen venue
@@ -457,7 +471,7 @@ class Game {
       if (e.me || (meId && e.id === meId)) li.className = 'me';
       const rank = document.createElement('span'); rank.className = 'rank'; rank.textContent = String(i + 1);
       const name = document.createElement('span'); name.className = 'pname'; name.textContent = e.name || 'BURD';
-      const score = document.createElement('span'); score.className = 'pscore'; score.textContent = String(e.score);
+      const score = document.createElement('span'); score.className = 'pscore'; score.textContent = fmtN(e.score);
       li.append(rank, name, score);
       listEl.appendChild(li);
     });
@@ -518,6 +532,7 @@ class Game {
 
     this.score = 0;
     this.combo = 0;
+    this.maxCombo = 0;
     this.hits = 0;
     this.bullseyes = 0;
     this.timeLeft = ROUND_TIME;
@@ -559,25 +574,33 @@ class Game {
     this.dom.gameover.classList.add('hidden');
     this.dom.hud.classList.remove('hidden');
 
+    // venue soundtrack: surf on the beach, the march + murmurs at the
+    // wedding, metal at the gig
+    this.audio.setAmbience(this.levelId);
+
     this.state = 'playing';
   }
 
   endRound() {
     this.state = 'gameover';
     this.input.setEnabled(false);
+    this.audio.stopAmbience();
     if (this.score > (this.bests[this.levelId] || 0)) {
       this.bests[this.levelId] = this.score;
       localStorage.setItem(this._bestKey(this.levelId), this.score);
       if (this.levelId === 'beach') localStorage.setItem('gulldump_best', this.score); // legacy key
     }
     this.best = this.bests[this.levelId];
-    this.dom.finalScore.textContent = this.score;
+    const newBest = this.score === this.best && this.score > 0;
+    this.dom.finalScore.textContent = fmtN(this.score);
     this.dom.goHits.textContent = this.hits;
-    this.dom.goBest.textContent = this.best;
+    this.dom.goBest.textContent = fmtN(this.best);
     this.dom.goBullseyes.textContent = this.bullseyes;
+    this.dom.goCombo.textContent = '\u00d7' + this.maxCombo;
     this.dom.goBlurb.textContent = this._blurb();
-    if (this.score === this.best && this.score > 0) this.dom.goTitle.innerHTML = `<span>NEW BEST!</span>` + iconSvg('trophy', { size: 30, cls: 'title-ic' });
-    else this.dom.goTitle.textContent = "TIME'S UP!";
+    this.dom.goBestChip.classList.toggle('new', newBest);
+    this.dom.goBestLabel.textContent = newBest ? 'NEW BEST' : 'BEST';
+    this.dom.goTitle.textContent = newBest ? 'NEW RECORD!' : "TIME'S UP!";
 
     // leaderboard: show where this run lands, ready to submit
     this._goScore = this.score;
@@ -674,12 +697,15 @@ class Game {
 
   // Fire a single turd. `opts`:
   //   bt        — eligible for bullet time (normal/fire single shots only)
-  //   yawOffset — fan the launch sideways (scatter spread)
-  //   pitchOffset — lob shorter/longer (scatter depth rows)
+  //   yawOffset — fan the launch sideways
+  //   pitchOffset — lob the shot a touch higher/lower
   //   sizeMul   — shrink the turd (scatter pellets)
+  //   offset    — {dx,dz}: shift the landing point by an exact world-space
+  //               offset (scatter spray); flight time stays the same, so the
+  //               horizontal velocity absorbs the whole shift analytically
   //   silent    — skip the per-shot whoosh (volleys/auto-fire play one cue)
   firePoop(power, opts = {}) {
-    const { bt = false, yawOffset = 0, pitchOffset = 0, sizeMul = 1, silent = false } = opts;
+    const { bt = false, yawOffset = 0, pitchOffset = 0, sizeMul = 1, silent = false, offset = null } = opts;
     const p0 = this.pos.clone().add(new THREE.Vector3(0, -0.8, 0));
     const v0 = this._launchVel(yawOffset, pitchOffset);
     const fire = this.weaponMode === 'fire';
@@ -690,12 +716,13 @@ class Game {
     group.scale.setScalar(turdScale);
     group.position.copy(p0);
     this.scene.add(group);
-    // Analytic projectile: pos(t) = p0 + v0*t + 0.5*g*t^2. Integrating exactly
-    // (rather than Euler) means the predicted-landing reticle is truthful.
-    const landing = this._predictLanding(p0, v0) || p0.clone();
     // Total fall time to the ground — used to pace the crowd's turn so each
     // figure finishes squaring up to the turd right as it arrives.
     const tFall = Math.max(0.001, this._timeToHeight(p0.y, v0.y, 0) || 1);
+    if (offset) { v0.x += offset.dx / tFall; v0.z += offset.dz / tFall; }
+    // Analytic projectile: pos(t) = p0 + v0*t + 0.5*g*t^2. Integrating exactly
+    // (rather than Euler) means the predicted-landing reticle is truthful.
+    const landing = this._predictLanding(p0, v0) || p0.clone();
     const seq = this._turdSeq = (this._turdSeq || 0) + 1;
     // Only a MAX-POWER, bullet-time-eligible drop hunts for a slow-mo target.
     const maxShot = bt && power >= MAX_CHARGE_BT;
@@ -728,29 +755,26 @@ class Game {
     return p;
   }
 
-  // Shotgun blast: one volley thrown as a circular 2/3/3/2 grid so it carpets a
-  // square-ish patch of ground rather than a single line. Each depth row fans in
-  // pitch (near→far) and each pellet in that row fans sideways in yaw. Single tap
-  // or a charged hold both work — charge just makes bigger pellets.
+  // Shotgun blast: one volley sprayed over a filled circle around the aim
+  // point. Pellets sample a jittered sunflower disc (golden-angle spiral), so
+  // the splats land as one round, organic blast — no rows, no columns — and
+  // the circle stretches slightly along the flight line for a "sprayed
+  // forward" feel. Single tap or a charged hold both work — charge just makes
+  // bigger pellets.
   _fireScatter(power) {
-    const rows = SCATTER_ROWS;
-    let first = true;
-    for (let r = 0; r < rows.length; r++) {
-      const n = rows[r];
-      // depth fraction: -0.5 (nearest) … +0.5 (farthest)
-      const pf = rows.length === 1 ? 0 : (r / (rows.length - 1) - 0.5);
-      for (let c = 0; c < n; c++) {
-        // sideways fraction within this row, centred on 0
-        const yf = n === 1 ? 0 : (c / (n - 1) - 0.5);
-        this.firePoop(power, {
-          bt: false,
-          yawOffset: yf * SCATTER_SPREAD,
-          pitchOffset: pf * SCATTER_PITCH,
-          sizeMul: SCATTER_SIZE,
-          silent: !first,
-        });
-        first = false;
-      }
+    const GOLDEN = 2.39996; // golden angle (rad)
+    const fwdX = Math.sin(this.yaw), fwdZ = Math.cos(this.yaw);
+    for (let i = 0; i < SCATTER_COUNT; i++) {
+      const r = SCATTER_RADIUS * Math.sqrt((i + 0.5) / SCATTER_COUNT) * (0.85 + Math.random() * 0.3);
+      const a = i * GOLDEN + Math.random() * 0.6;
+      const along = Math.sin(a) * r * SCATTER_STRETCH; // forward/back of centre
+      const across = Math.cos(a) * r;                  // left/right of centre
+      this.firePoop(power, {
+        bt: false,
+        sizeMul: SCATTER_SIZE,
+        silent: i > 0,
+        offset: { dx: fwdX * along + fwdZ * across, dz: fwdZ * along - fwdX * across },
+      });
     }
   }
 
@@ -782,15 +806,19 @@ class Game {
         const base = Math.round(h.tg.value * mult);
         const comboMult = 1 + (this.combo - 1) * 0.5;
         gain += Math.round(base * comboMult * this._superScoreMult());
+        // splatter gunk all over the victim — it rides their death tumble
+        this.effects.stickTo(h.tg.group, h === hits[0] ? 6 : 3, p.fire);
         this.targets.kill(h.tg);
         if (h.tg.special === 'super') superHit = true;
       }
+      this.maxCombo = Math.max(this.maxCombo, this.combo);
       this.score += gain;
-      this.dom.score.textContent = this.score;
+      this.dom.score.textContent = fmtN(this.score);
 
       if (bestAcc >= BULLSEYE_ACC) this.audio.bullseye();
       else if (bestAcc >= DIRECT_ACC) this.audio.splat(true);
       else this.audio.splat(false);
+      this.audio.crowdScream(hits.length); // "oh no!" from the victims
 
       // extra time for a clean shot, plus a touch for each extra victim splashed
       this.timeLeft += (bestAcc >= BULLSEYE_ACC ? TIME_BONUS_BULLSEYE : TIME_BONUS_HIT) + Math.max(0, hits.length - 1);
@@ -798,7 +826,7 @@ class Game {
       this.dom.timerPill.classList.toggle('warn', this.timeLeft <= 5);
 
       const prefix = hits.length > 1 ? `×${hits.length} ` : '';
-      this._showToast(`${prefix}${bestTier} +${gain}`);
+      this._showToast(`${prefix}${bestTier} +${fmtN(gain)}`);
       this._showCombo();
 
       // bombing the rare golden super turd activates / stacks SUPER TURD MODE
@@ -850,8 +878,11 @@ class Game {
       this.audio.superZap();
       this._showToast('SUPER TURD MODE!', 'bolt');
     } else {
-      // stack: more time, bigger turds, a louder celebration
-      this.superTimer += SUPER_STACK_TIME;
+      // stack: bigger turds and a higher points multiplier every time — but
+      // the clock only banks extra time through the 4th super turd. Beyond
+      // that the mode keeps scoring harder yet must eventually run out, so
+      // a hot streak can't snowball into permanent god mode.
+      if (this.superStack <= 4) this.superTimer += SUPER_STACK_TIME;
       this.audio.superStack();
       this.audio.seagullYell();
       this._showToast(`SUPER TURD ×${this.superStack}!`, 'bolt');

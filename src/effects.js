@@ -4,6 +4,19 @@ import { mat } from './models.js';
 // ---------------------------------------------------------------------------
 // Particle splats + lingering poop decals on the ground.
 // ---------------------------------------------------------------------------
+
+// Shared resources for the high-churn bits (satellite stains, sticky blobs),
+// so machine-gun volleys don't allocate fresh GPU buffers per impact.
+const SAT_GEO = new THREE.CircleGeometry(1, 8);
+const BLOB_GEO = new THREE.SphereGeometry(1, 6, 6);
+const decalMats = new Map();
+function decalMat(color) {
+  if (!decalMats.has(color)) {
+    decalMats.set(color, new THREE.MeshLambertMaterial({ color, transparent: true, opacity: 0.85, polygonOffset: true, polygonOffsetFactor: -2 }));
+  }
+  return decalMats.get(color);
+}
+
 export class Effects {
   constructor(scene) {
     this.scene = scene;
@@ -13,43 +26,74 @@ export class Effects {
     this.embers = [];
   }
 
-  // A juicy splat of blobs at a point, plus the lingering flat ground decal.
+  // A juicy splat of chunks at a point, plus the lingering flat ground decal
+  // with secondary spatter stains flicked out around it. Chunks explode apart,
+  // bounce once off the ground, and settle as flattened little blobs.
   // `scale` tracks turd size; `fire` swaps in molten-lava colours.
   splat(pos, big = false, scale = 1, fire = false) {
     const blobA = fire ? 0xff4500 : 0x6b4626;
     const blobB = fire ? 0xff7a18 : 0x7a5230;
     const group = new THREE.Group();
-    const n = big ? 16 : 10;
+    const n = big ? 18 : 12;
     const parts = [];
     for (let i = 0; i < n; i++) {
       const r = (0.12 + Math.random() * 0.22) * scale;
       const m = new THREE.Mesh(new THREE.SphereGeometry(r, 5, 5), mat(i % 3 === 0 ? blobA : blobB));
       const ang = Math.random() * Math.PI * 2;
-      const sp = 4 + Math.random() * 8;
+      const sp = 5 + Math.random() * 9;
       m.position.copy(pos);
       group.add(m);
       parts.push({
         m,
-        v: new THREE.Vector3(Math.cos(ang) * sp, 3 + Math.random() * 6, Math.sin(ang) * sp),
+        v: new THREE.Vector3(Math.cos(ang) * sp, 3.5 + Math.random() * 7, Math.sin(ang) * sp),
       });
     }
     this.scene.add(group);
-    this.bursts.push({ group, parts, t: 0, life: 1.2 });
+    this.bursts.push({ group, parts, t: 0, life: 1.35 });
 
     // flat decal on the ground (a charred scorch for fireballs)
+    const stain = fire ? 0x5a1500 : 0x6b4626;
     const decal = new THREE.Mesh(
       new THREE.CircleGeometry((big ? 1.4 : 0.9) * scale, 12),
-      new THREE.MeshLambertMaterial({ color: fire ? 0x5a1500 : 0x6b4626, transparent: true, opacity: 0.85, polygonOffset: true, polygonOffsetFactor: -2 }),
+      decalMat(stain),
     );
     decal.rotation.x = -Math.PI / 2;
     decal.position.set(pos.x, 0.12, pos.z);
     decal.scale.setScalar(0.2);
     this.scene.add(decal);
     this.decals.push({ m: decal, t: 0, grow: true });
+    // satellite stains — irregular secondary spatters around the main decal so
+    // every impact leaves a comic splat shape instead of a clean circle
+    const sats = 3 + ((Math.random() * 3) | 0);
+    for (let i = 0; i < sats; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const dist = (0.9 + Math.random() * 1.4) * scale * (big ? 1.2 : 0.95);
+      const sat = new THREE.Mesh(SAT_GEO, decalMat(stain));
+      sat.rotation.x = -Math.PI / 2;
+      sat.scale.setScalar((0.14 + Math.random() * 0.24) * scale);
+      sat.position.set(pos.x + Math.cos(ang) * dist, 0.11, pos.z + Math.sin(ang) * dist);
+      this.scene.add(sat);
+      this.decals.push({ m: sat, t: 0, grow: false });
+    }
     // cap decals
-    if (this.decals.length > 30) {
+    while (this.decals.length > 64) {
       const old = this.decals.shift();
       this.scene.remove(old.m);
+    }
+  }
+
+  // Splat gunk onto a victim: flattened blobs parented to the target so they
+  // ride its panic flail and death tumble (and vanish along with it).
+  stickTo(group, n = 5, fire = false) {
+    const cols = fire ? [0xff7a18, 0x5a1500, 0xff4500] : [0x6b4626, 0x7a5230, 0x5e3c1f];
+    for (let i = 0; i < n; i++) {
+      const m = new THREE.Mesh(BLOB_GEO, mat(cols[i % cols.length]));
+      const r = 0.1 + Math.random() * 0.13;
+      m.scale.set(r, r * 0.5, r); // squashed flat against the body
+      m.position.set((Math.random() - 0.5) * 0.85, 0.4 + Math.random() * 1.4, (Math.random() - 0.5) * 0.85);
+      m.rotation.set(Math.random() * 0.8 - 0.4, 0, Math.random() * 0.8 - 0.4);
+      m.castShadow = false;
+      group.add(m);
     }
   }
 
@@ -110,9 +154,25 @@ export class Effects {
       const b = this.bursts[i];
       b.t += dt;
       for (const p of b.parts) {
-        p.v.y -= 22 * dt;
+        if (p.settled) continue;
+        p.v.y -= 26 * dt;
         p.m.position.addScaledVector(p.v, dt);
-        if (p.m.position.y < 0.1) { p.m.position.y = 0.1; p.v.multiplyScalar(0); }
+        if (p.m.position.y < 0.1) {
+          if (!p.bounced && p.v.y < -4) {
+            // chunks pop back off the ground once, scattering outward
+            p.bounced = true;
+            p.m.position.y = 0.1;
+            p.v.y *= -(0.3 + Math.random() * 0.25);
+            p.v.x *= 0.65;
+            p.v.z *= 0.65;
+          } else {
+            // settle as a flattened little splat
+            p.settled = true;
+            p.m.position.y = 0.07;
+            p.v.set(0, 0, 0);
+            p.m.scale.y = 0.35;
+          }
+        }
       }
       const k = b.t / b.life;
       b.group.scale.setScalar(Math.max(0.01, 1 - k * 0.4));

@@ -1,7 +1,36 @@
 // ---------------------------------------------------------------------------
-// Tiny WebAudio synth — no audio files. Sounds are generated on the fly.
-// Must be unlocked by a user gesture (handled by main on first tap).
+// WebAudio engine: a tiny synth for the moment-to-moment blips (charge,
+// splat, bullseye…) plus recorded samples — per-level ambience loops, crowd
+// reactions and a real seagull — fetched lazily after the first user gesture.
+// Sounds are royalty-free recordings from pixabay.com (Pixabay Content
+// License). Every sample is optional: if a file is missing or fails to
+// decode, the synth fallbacks keep the game fully scored.
 // ---------------------------------------------------------------------------
+
+const SAMPLES = {
+  ambBeach: './audio/amb-beach.mp3',     // surf + gulls
+  ambWedding: './audio/amb-wedding.mp3', // slow wedding processional
+  ambMurmur: './audio/amb-murmur.mp3',   // light guest murmur (layered)
+  ambConcert: './audio/amb-concert.mp3', // heavy metal riffing
+  gull1: './audio/gull1.mp3',
+  gull2: './audio/gull2.mp3',
+  react1: './audio/react1.mp3',          // "oh no!"
+  react2: './audio/react2.mp3',          // deep "oh no"
+  react3: './audio/react3.mp3',          // gasp
+  react4: './audio/react4.mp3',          // crowd shocked reaction
+  react5: './audio/react5.mp3',          // funny scream
+  react6: './audio/react6.mp3',          // hysteric scream
+  react7: './audio/react7.mp3',          // wilhelm-style scream
+  react8: './audio/react8.mp3',          // short "ah!"
+};
+// Looping ambience layers per level id, with per-layer mix volume.
+const AMBIENCE = {
+  beach: [{ key: 'ambBeach', vol: 0.55 }],
+  wedding: [{ key: 'ambWedding', vol: 0.4 }, { key: 'ambMurmur', vol: 0.22 }],
+  concert: [{ key: 'ambConcert', vol: 0.5 }],
+};
+const REACTS = ['react1', 'react2', 'react3', 'react4', 'react5', 'react6', 'react7', 'react8'];
+
 export class Audio {
   constructor() {
     this.ctx = null;
@@ -9,6 +38,11 @@ export class Audio {
     this.enabled = true;
     this._chargeOsc = null;
     this._chargeGain = null;
+    this.buffers = {};
+    this._loading = false;
+    this._ambLevel = null;  // which level's ambience should be playing
+    this._ambNodes = [];    // live looping layers
+    this._lastReact = 0;
   }
 
   unlock() {
@@ -22,6 +56,113 @@ export class Audio {
     this.master = this.ctx.createGain();
     this.master.gain.value = 0.5;
     this.master.connect(this.ctx.destination);
+    this._loadSamples();
+  }
+
+  // Kick off the sample downloads immediately (no AudioContext needed), so
+  // they arrive while the player is still looking at the menu. Decoding waits
+  // for the first gesture (unlock), which creates the context.
+  preload() {
+    if (this._fetches) return;
+    this._fetches = {};
+    for (const [key, url] of Object.entries(SAMPLES)) {
+      this._fetches[key] = fetch(url)
+        .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.arrayBuffer(); })
+        .catch(() => null); // missing file → the synth fallback covers it
+    }
+  }
+
+  // Decode every prefetched sample. Each one that lands may immediately join
+  // the ambience if its level is already playing.
+  _loadSamples() {
+    if (this._loading) return;
+    this._loading = true;
+    this.preload();
+    for (const key of Object.keys(SAMPLES)) {
+      this._fetches[key]
+        .then((ab) => ab && new Promise((res, rej) => this.ctx.decodeAudioData(ab, res, rej)))
+        .then((buf) => {
+          if (!buf) return;
+          this.buffers[key] = buf;
+          if (this._ambLevel) this._refreshAmbience();
+        })
+        .catch(() => {});
+    }
+  }
+
+  _playBuf(key, vol = 1, rate = 1) {
+    const buf = this.buffers[key];
+    if (!this.enabled || !this.ctx || !buf) return false;
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    src.playbackRate.value = rate;
+    const g = this.ctx.createGain();
+    g.gain.value = vol;
+    src.connect(g);
+    g.connect(this.master);
+    src.start();
+    return true;
+  }
+
+  // ---- per-level ambience ------------------------------------------------
+  // setAmbience('beach' | 'wedding' | 'concert') starts that venue's loops
+  // (fading in); stopAmbience() fades everything out. Loops whose buffers
+  // haven't decoded yet join automatically the moment they land.
+  setAmbience(level) {
+    this._ambLevel = level;
+    this._refreshAmbience();
+  }
+
+  stopAmbience() {
+    this._ambLevel = null;
+    this._refreshAmbience();
+  }
+
+  _refreshAmbience() {
+    if (!this.ctx) return;
+    const want = (this._ambLevel && AMBIENCE[this._ambLevel]) || [];
+    const t = this.ctx.currentTime;
+    // fade out layers that no longer belong
+    for (const n of this._ambNodes) {
+      if (!want.some((w) => w.key === n.key)) {
+        n.gain.gain.setTargetAtTime(0.0001, t, 0.35);
+        try { n.src.stop(t + 1.5); } catch (e) {}
+        n.dead = true;
+      }
+    }
+    this._ambNodes = this._ambNodes.filter((n) => !n.dead);
+    // start any missing layers whose buffers are ready
+    for (const w of want) {
+      if (this._ambNodes.some((n) => n.key === w.key)) continue;
+      const buf = this.buffers[w.key];
+      if (!buf) continue;
+      const src = this.ctx.createBufferSource();
+      src.buffer = buf;
+      src.loop = true;
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.setTargetAtTime(w.vol, t, 0.7);
+      src.connect(g);
+      g.connect(this.master);
+      src.start(t);
+      this._ambNodes.push({ key: w.key, src, gain: g });
+    }
+  }
+
+  // ---- crowd reactions -----------------------------------------------------
+  // An "oh no!" / gasp / scream from whoever is getting splatted, with random
+  // pitch so repeats don't sound canned. Multi-hits pile on a second voice.
+  crowdScream(count = 1) {
+    if (!this.enabled || !this.ctx) return;
+    const now = (typeof performance !== 'undefined' ? performance : Date).now();
+    if (now - this._lastReact < 120) return; // don't shred during volleys
+    this._lastReact = now;
+    const key = REACTS[(Math.random() * REACTS.length) | 0];
+    this._playBuf(key, 0.9, 0.92 + Math.random() * 0.2);
+    if (count >= 3) {
+      const k2 = REACTS[(Math.random() * REACTS.length) | 0];
+      setTimeout(() => this._playBuf(k2, 0.7, 0.9 + Math.random() * 0.25), 140);
+    }
   }
 
   _tone(freq, dur, type = 'sine', vol = 0.4, slideTo = null) {
@@ -105,11 +246,13 @@ export class Audio {
     setTimeout(() => this._tone(1480, 0.09, 'triangle', 0.32), 55);
   }
 
-  // A loud, triumphant seagull "elation" yell for SUPER TURD MODE: a rising
-  // whoop, a flurry of descending gull squawks (the classic gull laugh), then a
-  // long victorious cry.
+  // A loud, triumphant seagull yell for SUPER TURD MODE: a real recorded gull
+  // call (two takes, random pitch) — with the old synth squawk as fallback if
+  // the sample hasn't loaded.
   seagullYell() {
     if (!this.enabled || !this.ctx) return;
+    const key = Math.random() < 0.5 ? 'gull1' : 'gull2';
+    if (this._playBuf(key, 1.1, 0.95 + Math.random() * 0.12)) return;
     this._tone(420, 0.2, 'sawtooth', 0.55, 1100);          // rising whoop
     const notes = [1400, 1240, 1080, 940, 820, 720, 640];  // descending laugh
     notes.forEach((f, i) => setTimeout(() => {

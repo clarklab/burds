@@ -114,8 +114,15 @@ out on the bay, clouds drifting overhead and hazy headlands on the horizon.
   context recovers with a clean reload.
 - **Analytic projectile motion** — the poop integrates position in closed form,
   so the predicted-landing reticle is always truthful.
-- **WebAudio synth** — all sound effects are generated at runtime; no audio
-  files.
+- **WebAudio synth + sampled soundtrack** — moment-to-moment blips (charge,
+  splat, bullseye) are synthesized at runtime, layered with recorded samples:
+  per-level ambience (surf on the beach, a slow wedding march with guest
+  murmurs, heavy metal at the gig), "oh no!" / gasp / scream crowd reactions
+  on every hit, and a real seagull cry on power-ups. Samples are royalty-free
+  recordings from [Pixabay](https://pixabay.com/) (Pixabay Content License,
+  no attribution required), mastered to small mono MP3s in `audio/` and
+  precached by the service worker; if any file is missing the synth fallbacks
+  keep the game fully scored.
 
 ## Project layout
 
@@ -125,6 +132,7 @@ styles.css        # mobile-first UI
 sw.js             # service worker: offline cache + version-based buster
 manifest.webmanifest  # PWA manifest (installable, fullscreen)
 icon.svg          # app / home-screen icon
+audio/            # ambience loops + SFX samples (Pixabay Content License)
 vendor/           # vendored three.module.js
 src/
   main.js         # game loop, flight (runner + circuit), physics, scoring
